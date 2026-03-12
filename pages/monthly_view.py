@@ -47,7 +47,8 @@ with rc1:
                 acc_origen = acc_srv.get_by_id(l['cuenta_origen'])
                 acc_origen_name = acc_origen.get('nombre', 'Unknown Account') if acc_origen else 'Unknown Account'
                 loan_fecha = str(l.get('fecha'))[:10]
-                st.markdown(f"<small style='color:#ff4b4b; font-weight:bold;'>- Pending Loan: {format_currency(l['monto'])} from {acc_origen_name} (since {loan_fecha})</small>", unsafe_allow_html=True)
+                pending_amount = l.get('outstanding_amount', l.get('monto', 0.0))
+                st.markdown(f"<small style='color:#ff4b4b; font-weight:bold;'>- Pending Loan: {format_currency(pending_amount)} from {acc_origen_name} (since {loan_fecha})</small>", unsafe_allow_html=True)
     else:
         st.info(f"### Resultado Real\n# {format_currency(summary['resultado_real'])}")
 with rc2:
