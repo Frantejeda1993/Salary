@@ -11,6 +11,7 @@ class Transfer:
     id: Optional[str] = None
     is_loan: bool = False
     status: str = 'pending' # 'pending' or 'paid'
+    outstanding_amount: float = 0.0
     created_at: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> dict:
@@ -21,6 +22,7 @@ class Transfer:
             "monto": self.monto,
             "is_loan": self.is_loan,
             "status": self.status,
+            "outstanding_amount": self.outstanding_amount if self.is_loan else 0.0,
             "created_at": self.created_at
         }
 
@@ -38,5 +40,6 @@ class Transfer:
             monto=data.get('monto', 0.0),
             is_loan=data.get('is_loan', False),
             status=data.get('status', 'pending'),
+            outstanding_amount=data.get('outstanding_amount', data.get('monto', 0.0) if data.get('is_loan', False) else 0.0),
             created_at=data.get('created_at', datetime.now())
         )

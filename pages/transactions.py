@@ -128,7 +128,8 @@ else:
                         cuenta_destino=acc_options[destino_name]['id'],
                         monto=monto_loan,
                         is_loan=True,
-                        status='pending'
+                        status='pending',
+                        outstanding_amount=monto_loan
                     )
                     trf_srv.add(new_loan.to_dict())
                     st.success("Loan recorded successfully.")
@@ -357,7 +358,7 @@ st.divider()
 st.subheader("Pending Loans")
 
 loans = trf_srv.get_by_field("is_loan", "==", True)
-pending_loans = [l for l in loans if l.get('status') == 'pending']
+pending_loans = [l for l in loans if l.get('status') == 'pending' and l.get('outstanding_amount', l.get('monto', 0.0)) > 0]
 
 if pending_loans:
     pending_loans.sort(key=lambda x: str(x.get('fecha', '')), reverse=True)
@@ -374,24 +375,41 @@ if pending_loans:
         c1.write(fecha_str)
         c2.write(acc_lookup.get(pl.get('cuenta_origen'), 'Unknown'))
         c3.write(acc_lookup.get(pl.get('cuenta_destino'), 'Unknown'))
-        c4.write(format_currency(pl.get('monto', 0.0)))
-        
-        if c5.button("Mark Paid", key=f"pay_loan_{pl['id']}"):
-            # Update status to paid
-            trf_srv.update(pl['id'], {"status": "paid"})
-            
-            # Create reverse transfer (repayment)
-            repayment = Transfer(
-                fecha=date.today(),
-                cuenta_origen=pl['cuenta_destino'], # Reverse direction
-                cuenta_destino=pl['cuenta_origen'],
-                monto=pl['monto'],
-                is_loan=False, # It's just a transfer back
-                status='paid'
-            )
-            trf_srv.add(repayment.to_dict())
-            st.success("Loan marked as paid and funds returned.")
-            st.rerun()
+        outstanding_amount = float(pl.get('outstanding_amount', pl.get('monto', 0.0)))
+        c4.write(f"{format_currency(pl.get('monto', 0.0))} (Pending: {format_currency(outstanding_amount)})")
+
+        repay_key = f"repay_amount_{pl['id']}"
+        repay_amount = c5.number_input(
+            "Pay",
+            min_value=0.0,
+            max_value=outstanding_amount,
+            value=outstanding_amount,
+            step=10.0,
+            key=repay_key
+        )
+
+        if c5.button("Repay", key=f"pay_loan_{pl['id']}"):
+            if repay_amount <= 0:
+                st.error("Repayment amount must be greater than zero.")
+            else:
+                new_outstanding = max(outstanding_amount - repay_amount, 0.0)
+                new_status = 'paid' if new_outstanding == 0 else 'pending'
+                trf_srv.update(pl['id'], {
+                    "outstanding_amount": new_outstanding,
+                    "status": new_status
+                })
+
+                repayment = Transfer(
+                    fecha=date.today(),
+                    cuenta_origen=pl['cuenta_destino'],
+                    cuenta_destino=pl['cuenta_origen'],
+                    monto=repay_amount,
+                    is_loan=False,
+                    status='paid'
+                )
+                trf_srv.add(repayment.to_dict())
+                st.success(f"Repayment recorded. Pending amount: {format_currency(new_outstanding)}")
+                st.rerun()
 else:
     st.info("No pending loans.")
 

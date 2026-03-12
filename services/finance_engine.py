@@ -253,7 +253,7 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
     transfers = _get_service("transfers").get_by_field("cuenta_destino", "==", account_id)
     pending_loans = [
         t for t in transfers
-        if t.get('is_loan', False) and t.get('status', 'pending') == 'pending'
+        if t.get('is_loan', False) and t.get('status', 'pending') == 'pending' and t.get('outstanding_amount', t.get('monto', 0.0)) > 0
     ]
     if month:
         pending_loans = [
@@ -287,8 +287,9 @@ def get_month_summary(month: str) -> dict:
     # Add ALL pending loans for this month to extra incomes (global)
     transfers = _get_service("transfers").get_all()
     loans_this_month = sum(
-        t['monto'] for t in transfers 
+        t.get('outstanding_amount', t.get('monto', 0.0)) for t in transfers 
         if t.get('is_loan', False) and t.get('status', 'pending') == 'pending' and 
+        t.get('outstanding_amount', t.get('monto', 0.0)) > 0 and
         (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
     )
     
@@ -316,7 +317,7 @@ def get_month_summary(month: str) -> dict:
         
         main_base_incomes = sum(i['monto'] for i in incomes if i.get('account_id') == main_id and (i['fecha'].date() if isinstance(i['fecha'], datetime) else datetime.strptime(i['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month)
         main_loans = get_pending_loans_for_account(main_id, month)
-        main_loans_total = sum(l['monto'] for l in main_loans)
+        main_loans_total = sum(l.get('outstanding_amount', l.get('monto', 0.0)) for l in main_loans)
         
         main_extra_incomes = main_base_incomes + main_loans_total
         

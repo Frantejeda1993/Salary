@@ -107,8 +107,9 @@ if transfers:
         amt_str = format_currency(tr.get('monto', 0.0))
         loan_badge = ""
         if tr.get('is_loan', False):
+            pending_amount = tr.get('outstanding_amount', tr.get('monto', 0.0))
             if tr.get('status') == 'pending':
-                loan_badge = " *(Loan: Pending)*"
+                loan_badge = f" *(Loan: Pending {format_currency(pending_amount)})*"
             elif tr.get('status') == 'paid':
                 loan_badge = " *(Loan: Paid)*"
                 
