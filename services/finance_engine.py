@@ -117,7 +117,7 @@ def calculate_real_balance(account_id: str) -> float:
     for fe in all_fixed:
         instances = fixed_inst_srv.get_by_field("fixed_expense_id", "==", fe['id'])
         paid_instances = [inst for inst in instances if inst.get('estado') == 'pagado']
-        balance -= fe.get('monto', 0.0) * len(paid_instances)
+        balance -= sum(inst.get('monto', fe.get('monto', 0.0)) for inst in paid_instances)
     
     # Transfers out
     transfers_out = _get_service("transfers").get_by_field("cuenta_origen", "==", account_id)
@@ -161,10 +161,12 @@ def get_fixed_expenses_for_month(month: str) -> list:
             instances = fixed_inst_srv.get_by_field("fixed_expense_id", "==", fe['id'])
             month_instance = next((inst for inst in instances if inst.get('mes') == month), None)
             estado = month_instance.get('estado') if month_instance else 'impagado'
-            
+            monto_pagado = month_instance.get('monto') if month_instance else None
+
             # append state to dictionary
             res = dict(fe)
             res['estado'] = estado
+            res['monto_pagado'] = monto_pagado
             active_in_month.append(res)
             
     return active_in_month
@@ -278,7 +280,7 @@ def get_month_summary(month: str) -> dict:
     ingresos_extra_total = ingresos_extra_base + loans_this_month
     
     # Calculate Results
-    fixed_paid = sum(fe['monto'] for fe in fixed_all if fe['estado'] == 'pagado')
+    fixed_paid = sum((fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto']) for fe in fixed_all if fe['estado'] == 'pagado')
     
     # Identify Main Account for "Resultado Real"
     acc_srv = _get_service("accounts")
@@ -294,7 +296,7 @@ def get_month_summary(month: str) -> dict:
             month
         ))
         
-        main_fixed = sum(fe['monto'] for fe in fixed_all if fe.get('account_id') == main_id and fe['estado'] == 'pagado')
+        main_fixed = sum((fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto']) for fe in fixed_all if fe.get('account_id') == main_id and fe['estado'] == 'pagado')
         main_expenses = sum(e['monto'] for e in expenses if e.get('account_id') == main_id and (e['fecha'].date() if isinstance(e['fecha'], datetime) else datetime.strptime(e['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month)
         
         main_base_incomes = sum(i['monto'] for i in incomes if i.get('account_id') == main_id and (i['fecha'].date() if isinstance(i['fecha'], datetime) else datetime.strptime(i['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month)
