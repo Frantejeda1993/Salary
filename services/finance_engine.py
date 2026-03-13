@@ -19,7 +19,9 @@ def _month_from_value(value):
 
 def _month_is_on_or_before(value, month: str) -> bool:
     item_month = _month_from_value(value)
-    return bool(item_month and item_month <= month)
+    if not item_month:
+        return False
+    return parse_month(item_month) <= parse_month(month)
 
 def calculate_salary_net(salary_id: str, month: str) -> float:
     """Calculates the net salary for a given month considering active deductions and overtimes."""
@@ -137,7 +139,7 @@ def calculate_real_balance_for_month(account_id: str, month: str) -> float:
         instances = fixed_inst_srv.get_by_field("fixed_expense_id", "==", fe['id'])
         paid_instances = [
             inst for inst in instances
-            if inst.get('estado') == 'pagado' and inst.get('mes', '') <= month
+            if inst.get('estado') == 'pagado' and inst.get('mes') and inst.get('mes') <= month
         ]
         balance -= fe.get('monto', 0.0) * len(paid_instances)
 

@@ -37,10 +37,10 @@ st.divider()
 rc1, rc2 = st.columns(2)
 with rc1:
     res_details = summary.get('resultado_real_details')
-    title_suffix = f" ({res_details['main_account_name']})" if res_details else ""
-    st.info(f"### Resultado Real{title_suffix}\n# {format_currency(summary['resultado_real'])}")
+    st.info(f"### Resultado Real\n# {format_currency(summary['resultado_real'])}")
 
     if res_details:
+        st.caption(f"Cuenta principal: {res_details.get('main_account_name', 'Main')}")
         pending_loans = res_details.get('pending_loans', [])
         if pending_loans:
             for l in pending_loans:
@@ -50,8 +50,7 @@ with rc1:
                 pending_amount = l.get('outstanding_amount', l.get('monto', 0.0))
                 st.markdown(f"<small style='color:#ff4b4b; font-weight:bold;'>- Pending Loan: {format_currency(pending_amount)} from {acc_origen_name} (since {loan_fecha})</small>", unsafe_allow_html=True)
 with rc2:
-    title_suffix = f" ({res_details['main_account_name']})" if res_details else ""
-    st.success(f"### Resultado Proyectado{title_suffix}\n# {format_currency(summary['resultado_proyectado'])}")
+    st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")
 
 st.divider()
 st.subheader("Budget Usage Breakdown")
