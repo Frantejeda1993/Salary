@@ -16,20 +16,43 @@ banks = bank_srv.get_all()
 accounts = acc_srv.get_all()
 budgets = bud_srv.get_all()
 
+
+def build_category_options(category_items):
+    return [
+        {"label": f"{c.get('nombre', 'Unknown Category')} · {str(c.get('id', ''))[:6]}", "id": c.get('id')}
+        for c in category_items if c.get('tipo', 'normal') != 'extra'
+    ]
+
+
+def build_account_options(account_items, bank_lookup):
+    return [
+        {
+            "label": f"{a.get('nombre', 'Unknown Account')} · {bank_lookup.get(a.get('bank_id'), 'Unknown Bank')} · {str(a.get('id', ''))[:6]}",
+            "id": a.get('id'),
+            "bank_id": a.get('bank_id')
+        }
+        for a in account_items
+    ]
+
 if not categories or not accounts:
     st.warning("Please ensure you have at least one Category and one Account created before adding a Budget.")
 else:
-    cat_options = {c['nombre']: c['id'] for c in categories if c.get('tipo', 'normal') != 'extra'}
-    acc_options = {a['nombre']: a for a in accounts}
+    bank_lookup = {b['id']: b['nombre'] for b in banks}
+    cat_options = build_category_options(categories)
+    acc_options = build_account_options(accounts, bank_lookup)
 
     with st.expander("Add New Budget", expanded=False):
         with st.form("add_budget_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
             
             with col1:
-                categoria_nombre = st.selectbox("Category", list(cat_options.keys()) if cat_options else ["None"])
+                cat_labels = [c['label'] for c in cat_options]
+                categoria_label = st.selectbox("Category", cat_labels if cat_labels else ["None"])
+                selected_category = next((c for c in cat_options if c['label'] == categoria_label), None)
                 monto = st.number_input("Monthly Budget Amount", min_value=0.0, step=100.0)
-                account_nombre = st.selectbox("Account", list(acc_options.keys()))
+                acc_labels = [a['label'] for a in acc_options]
+                account_label = st.selectbox("Account", acc_labels)
+                selected_acc = next((a for a in acc_options if a['label'] == account_label), None)
                 
             with col2:
                 fecha_inicio = st.date_input("Start Date", value=date.today(), format="DD/MM/YYYY")
@@ -39,10 +62,9 @@ else:
             submitted = st.form_submit_button("Save Budget")
             
             if submitted:
-                if cat_options and categoria_nombre != "None":
-                    selected_acc = acc_options[account_nombre]
+                if selected_category and selected_acc:
                     new_budget = Budget(
-                        categoria_id=cat_options[categoria_nombre],
+                        categoria_id=selected_category['id'],
                         monto=monto,
                         fecha_inicio=fecha_inicio,
                         fecha_fin=fecha_fin,
@@ -62,24 +84,18 @@ def edit_budget_dialog(budget, cat_options, acc_options):
         
         with col1:
             current_cat_id = budget.get("categoria_id")
-            cat_names = list(cat_options.keys())
-            try:
-                current_cat_name = next(name for name, cid in cat_options.items() if cid == current_cat_id)
-                cat_index = cat_names.index(current_cat_name)
-            except StopIteration:
-                cat_index = 0
-            categoria_nombre = st.selectbox("Category", cat_names if cat_names else ["None"], index=cat_index)
+            cat_labels = [c['label'] for c in cat_options]
+            cat_index = next((i for i, c in enumerate(cat_options) if c['id'] == current_cat_id), 0)
+            categoria_label = st.selectbox("Category", cat_labels if cat_labels else ["None"], index=cat_index)
+            selected_category = next((c for c in cat_options if c['label'] == categoria_label), None)
             
             monto = st.number_input("Monthly Budget Amount", value=float(budget.get("monto", 0.0)), step=100.0)
             
             current_acc_id = budget.get("account_id")
-            acc_names = list(acc_options.keys())
-            try:
-                current_acc_name = next(name for name, acc in acc_options.items() if acc['id'] == current_acc_id)
-                acc_index = acc_names.index(current_acc_name)
-            except StopIteration:
-                acc_index = 0
-            account_nombre = st.selectbox("Account", acc_names, index=acc_index)
+            acc_labels = [a['label'] for a in acc_options]
+            acc_index = next((i for i, a in enumerate(acc_options) if a['id'] == current_acc_id), 0)
+            account_label = st.selectbox("Account", acc_labels, index=acc_index)
+            selected_acc = next((a for a in acc_options if a['label'] == account_label), None)
             
         with col2:
             fecha_inicio = st.date_input("Start Date", value=budget.get("fecha_inicio", date.today()), format="DD/MM/YYYY")
@@ -90,10 +106,9 @@ def edit_budget_dialog(budget, cat_options, acc_options):
         submitted = st.form_submit_button("Update Budget")
         
         if submitted:
-            if cat_options and categoria_nombre != "None":
-                selected_acc = acc_options[account_nombre]
+            if selected_category and selected_acc:
                 bud_srv.update(budget["id"], {
-                    "categoria_id": cat_options[categoria_nombre],
+                    "categoria_id": selected_category['id'],
                     "monto": monto,
                     "fecha_inicio": datetime.combine(fecha_inicio, datetime.min.time()) if fecha_inicio else None,
                     "fecha_fin": datetime.combine(fecha_fin, datetime.min.time()) if fecha_fin else None,
@@ -120,8 +135,9 @@ if budgets:
         c3.write(f"Period: {start_d} to {end_d}")
         
         if c4.button("Edit", key=f"edit_b_{b['id']}"):
-            cat_options_pass = {c['nombre']: c['id'] for c in categories if c.get('tipo', 'normal') != 'extra'}
-            acc_options_pass = {a['nombre']: a for a in accounts}
+            cat_options_pass = build_category_options(categories)
+            bank_lookup_pass = {b['id']: b['nombre'] for b in banks}
+            acc_options_pass = build_account_options(accounts, bank_lookup_pass)
             edit_budget_dialog(b, cat_options_pass, acc_options_pass)
         if c5.button("Delete", key=f"del_b_{b['id']}"):
             bud_srv.delete(b['id'])

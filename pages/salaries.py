@@ -33,10 +33,21 @@ def validate_deductions_percentages(deductions: list[dict]) -> tuple[bool, str]:
 accounts = acc_srv.get_all()
 salaries = sal_srv.get_all()
 
+
+def build_account_options(account_items):
+    return [
+        {
+            "label": f"{a.get('nombre', 'Unknown Account')} · {str(a.get('id', ''))[:6]}",
+            "id": a.get("id"),
+            "bank_id": a.get("bank_id"),
+        }
+        for a in account_items
+    ]
+
 if not accounts:
     st.warning("Please add an Account first.")
 else:
-    acc_options = {a['nombre']: a for a in accounts}
+    acc_options = build_account_options(accounts)
 
     with st.expander("Add New Salary", expanded=False):
         with st.form("add_salary_form", clear_on_submit=True):
@@ -45,7 +56,9 @@ else:
             with col1:
                 nombre = st.text_input("Position / Title")
                 salario_bruto = st.number_input("Gross Salary", min_value=0.0, step=100.0)
-                account_nombre = st.selectbox("Account to deposit", list(acc_options.keys()))
+                acc_labels = [a["label"] for a in acc_options]
+                account_label = st.selectbox("Account to deposit", acc_labels)
+                selected_acc = next((a for a in acc_options if a["label"] == account_label), None)
             with col2:
                 fecha_inicio = st.date_input("Start Date", value=date.today(), format="DD/MM/YYYY")
                 has_end_date = st.checkbox("Has End Date?", value=False)
@@ -83,8 +96,6 @@ else:
             submitted = st.form_submit_button("Save Salary")
             
             if submitted and nombre:
-                selected_acc = acc_options[account_nombre]
-                
                 final_deductions = [
                     {
                         "name": d.get("name", ""),
@@ -118,13 +129,10 @@ def edit_salary_dialog(salary, acc_options):
             
             # Match account
             current_acc_id = salary.get("account_id")
-            acc_names = list(acc_options.keys())
-            try:
-                current_acc_name = next(name for name, acc in acc_options.items() if acc['id'] == current_acc_id)
-                acc_index = acc_names.index(current_acc_name)
-            except StopIteration:
-                acc_index = 0
-            account_nombre = st.selectbox("Account to deposit", acc_names, index=acc_index)
+            acc_labels = [a["label"] for a in acc_options]
+            acc_index = next((i for i, a in enumerate(acc_options) if a["id"] == current_acc_id), 0)
+            account_label = st.selectbox("Account to deposit", acc_labels, index=acc_index)
+            selected_acc = next((a for a in acc_options if a["label"] == account_label), None)
             
         with col2:
             fecha_inicio = st.date_input("Start Date", value=salary.get("fecha_inicio", date.today()), format="DD/MM/YYYY")
@@ -177,8 +185,6 @@ def edit_salary_dialog(salary, acc_options):
         
         if submitted:
             if nombre:
-                selected_acc = acc_options[account_nombre]
-                
                 final_deductions = [
                     {
                         "name": d.get("name", ""),

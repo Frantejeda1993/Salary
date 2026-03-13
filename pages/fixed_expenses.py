@@ -13,7 +13,20 @@ fe_srv = FirestoreService("fixed_expenses")
 fei_srv = FirestoreService("fixed_expense_instances")
 
 accounts = acc_srv.get_all()
-acc_lookup = {a['nombre']: a for a in accounts} if accounts else {}
+
+
+def build_account_options(account_items):
+    return [
+        {
+            "label": f"{a.get('nombre', 'Unknown Account')} · {str(a.get('id', ''))[:6]}",
+            "id": a.get('id'),
+            "bank_id": a.get('bank_id')
+        }
+        for a in account_items
+    ]
+
+
+acc_options = build_account_options(accounts) if accounts else []
 
 # Add new Fixed Expense
 with st.expander("Add New Fixed Expense", expanded=False):
@@ -26,7 +39,9 @@ with st.expander("Add New Fixed Expense", expanded=False):
             with col1:
                 nombre = st.text_input("Expense Name")
                 monto = st.number_input("Monthly Amount", step=100.0)
-                account_nombre = st.selectbox("Account", list(acc_lookup.keys()))
+                acc_labels = [a['label'] for a in acc_options]
+                account_label = st.selectbox("Account", acc_labels)
+                selected_acc = next((a for a in acc_options if a['label'] == account_label), None)
                 
             with col2:
                 fecha_inicio = st.date_input("Start Date", value=date.today(), format="DD/MM/YYYY")
@@ -36,8 +51,10 @@ with st.expander("Add New Fixed Expense", expanded=False):
             submitted = st.form_submit_button("Save Fixed Expense")
             
             if submitted and nombre:
-                selected_acc = acc_lookup[account_nombre]
-                new_fe = FixedExpense(
+                if not selected_acc:
+                    st.error("Please select a valid account.")
+                else:
+                    new_fe = FixedExpense(
                     nombre=nombre,
                     monto=monto,
                     fecha_inicio=fecha_inicio,
@@ -45,9 +62,9 @@ with st.expander("Add New Fixed Expense", expanded=False):
                     bank_id=selected_acc['bank_id'],
                     account_id=selected_acc['id']
                 )
-                fe_srv.add(new_fe.to_dict())
-                st.success("Fixed Expense added successfully!")
-                st.rerun()
+                    fe_srv.add(new_fe.to_dict())
+                    st.success("Fixed Expense added successfully!")
+                    st.rerun()
 
 st.divider()
 st.subheader("Manage Monthly Payments")
@@ -100,7 +117,7 @@ else:
     st.info("No active fixed expenses for this month.")
 
 @st.dialog("Edit Fixed Expense")
-def edit_fe_dialog(fe, acc_lookup):
+def edit_fe_dialog(fe, acc_options):
     with st.form(f"edit_fe_form_{fe['id']}", clear_on_submit=False):
         col1, col2 = st.columns(2)
         
@@ -109,13 +126,10 @@ def edit_fe_dialog(fe, acc_lookup):
             monto = st.number_input("Monthly Amount", value=float(fe.get("monto", 0.0)), step=100.0)
             
             current_acc_id = fe.get("account_id")
-            acc_names = list(acc_lookup.keys())
-            try:
-                current_acc_name = next(name for name, acc in acc_lookup.items() if acc['id'] == current_acc_id)
-                acc_index = acc_names.index(current_acc_name)
-            except StopIteration:
-                acc_index = 0
-            account_nombre = st.selectbox("Account", acc_names, index=acc_index)
+            acc_labels = [a['label'] for a in acc_options]
+            acc_index = next((i for i, a in enumerate(acc_options) if a['id'] == current_acc_id), 0)
+            account_label = st.selectbox("Account", acc_labels, index=acc_index)
+            selected_acc = next((a for a in acc_options if a['label'] == account_label), None)
             
         with col2:
             fecha_inicio = st.date_input("Start Date", value=fe.get("fecha_inicio", date.today()), format="DD/MM/YYYY")
@@ -127,7 +141,9 @@ def edit_fe_dialog(fe, acc_lookup):
         
         if submitted:
             if nombre:
-                selected_acc = acc_lookup[account_nombre]
+                if not selected_acc:
+                    st.error("Please select a valid account.")
+                    return
                 fe_srv.update(fe["id"], {
                     "nombre": nombre,
                     "monto": monto,
@@ -155,7 +171,7 @@ if all_fe:
         c3.write(f"Period: {start_d} to {end_d}")
         
         if c4.button("Edit", key=f"edit_fe_{fe['id']}"):
-            edit_fe_dialog(fe, acc_lookup)
+            edit_fe_dialog(fe, acc_options)
         if c5.button("Delete", key=f"del_fe_{fe['id']}"):
             fe_srv.delete(fe['id'])
             # Also potentially delete instances, but kept simple here
