@@ -123,43 +123,24 @@ def _get_account_historical_salary_incomes(account_id: str, up_to_month: str = N
             
     return total
 
-
-def _month_from_value(value) -> str | None:
-    """Returns month string (YYYY-MM) from supported date-like values."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.strftime("%Y-%m")
-    if isinstance(value, str) and len(value) >= 7:
-        return value[:7]
-    return None
-
-
-def _is_month_lte(value, month: str) -> bool:
-    """Checks whether a date-like value is in or before the provided month."""
-    value_month = _month_from_value(value)
-    if not value_month:
-        return False
-    return parse_month(value_month) <= parse_month(month)
-
-
-def calculate_real_balance_for_month(account_id: str, month: str) -> float:
-    """Calculated as cumulative real balance up to the selected month (inclusive)."""
+def calculate_real_balance(account_id: str) -> float:
+    """Calculated as: saldo_inicial + sueldos netos_pasados + ingresos_extra - gastos - transferencias_salientes + transferencias_entrantes"""
     account = _get_service("accounts").get_by_id(account_id)
     if not account: return 0.0
     
     balance = account.get('saldo_inicial', 0.0)
+    current_m = get_current_month()
     
-    # Add all past and selected month salaries
-    balance += _get_account_historical_salary_incomes(account_id, month)
+    # Add all past and current month salaries
+    balance += _get_account_historical_salary_incomes(account_id, current_m)
     
     # Extra incomes
     incomes = _get_service("incomes").get_by_field("account_id", "==", account_id)
-    balance += sum(inc.get('monto', 0.0) for inc in incomes if _is_month_lte(inc.get('fecha'), month))
+    balance += sum(inc.get('monto', 0.0) for inc in incomes)
     
     # Expenses (gastos_pagados are essentially the expenses table)
     expenses = _get_service("expenses").get_by_field("account_id", "==", account_id)
-    balance -= sum(exp.get('monto', 0.0) for exp in expenses if _is_month_lte(exp.get('fecha'), month))
+    balance -= sum(exp.get('monto', 0.0) for exp in expenses)
     
     # Paid fixed expenses
     fixed_exp_srv = _get_service("fixed_expenses")
@@ -167,26 +148,18 @@ def calculate_real_balance_for_month(account_id: str, month: str) -> float:
     all_fixed = fixed_exp_srv.get_by_field("account_id", "==", account_id)
     for fe in all_fixed:
         instances = fixed_inst_srv.get_by_field("fixed_expense_id", "==", fe['id'])
-        paid_instances = [
-            inst for inst in instances
-            if inst.get('estado') == 'pagado' and _is_month_lte(f"{inst.get('mes', '')}-01", month)
-        ]
+        paid_instances = [inst for inst in instances if inst.get('estado') == 'pagado']
         balance -= fe.get('monto', 0.0) * len(paid_instances)
     
     # Transfers out
     transfers_out = _get_service("transfers").get_by_field("cuenta_origen", "==", account_id)
-    balance -= sum(tr.get('monto', 0.0) for tr in transfers_out if _is_month_lte(tr.get('fecha'), month))
+    balance -= sum(tr.get('monto', 0.0) for tr in transfers_out)
     
     # Transfers in
     transfers_in = _get_service("transfers").get_by_field("cuenta_destino", "==", account_id)
-    balance += sum(tr.get('monto', 0.0) for tr in transfers_in if _is_month_lte(tr.get('fecha'), month))
+    balance += sum(tr.get('monto', 0.0) for tr in transfers_in)
     
     return balance
-
-
-def calculate_real_balance(account_id: str) -> float:
-    """Calculated as: saldo_inicial + sueldos netos_pasados + ingresos_extra - gastos - transferencias_salientes + transferencias_entrantes"""
-    return calculate_real_balance_for_month(account_id, get_current_month())
 
 def get_active_budgets(month: str) -> list:
     """Returns all budgets active in a given month."""
@@ -258,22 +231,23 @@ def calculate_category_spending(month: str, account_id: str = None) -> dict:
                 
     return spending
 
-def calculate_projected_balance_for_month(account_id: str, month: str) -> float:
+def calculate_projected_balance(account_id: str) -> float:
     """Calcula el saldo proyectado del mes actual.
 
     El saldo real ya incluye los gastos reales registrados. Por eso aquí solo se resta:
     - gastos fijos impagados del mes actual, y
     - la parte pendiente de cada presupuesto activo (presupuesto - gasto_real, si es positiva).
     """
-    real = calculate_real_balance_for_month(account_id, month)
+    real = calculate_real_balance(account_id)
+    current_m = get_current_month()
     
     # Gastos fijos pendientes for current month
-    fixed_this_month = get_fixed_expenses_for_month(month)
+    fixed_this_month = get_fixed_expenses_for_month(current_m)
     fixed_pendientes = sum(fe['monto'] for fe in fixed_this_month if fe['account_id'] == account_id and fe['estado'] == 'impagado')
     
     # Presupuestos
-    active_budgets = get_active_budgets(month)
-    spending = calculate_category_spending(month, account_id)
+    active_budgets = get_active_budgets(current_m)
+    spending = calculate_category_spending(current_m, account_id)
     
     # Solo resta la parte de presupuesto que aún no se ha ejecutado en gasto real.
     pending_budget_impact = 0.0
@@ -287,10 +261,6 @@ def calculate_projected_balance_for_month(account_id: str, month: str) -> float:
             pending_budget_impact += (presupuesto - real_spent)
             
     return real - fixed_pendientes - pending_budget_impact
-
-
-def calculate_projected_balance(account_id: str) -> float:
-    return calculate_projected_balance_for_month(account_id, get_current_month())
 
 def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
     """Returns incoming pending loans for an account, optionally filtered by month."""

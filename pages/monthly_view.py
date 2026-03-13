@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from services.finance_engine import get_month_summary, calculate_real_balance_for_month, calculate_projected_balance_for_month, get_active_budgets, calculate_category_spending
+from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending
 from utils.date_utils import get_current_month, get_month_options
 from services.firestore_service import FirestoreService
 from utils.money_utils import format_currency
@@ -37,9 +37,10 @@ st.divider()
 rc1, rc2 = st.columns(2)
 with rc1:
     res_details = summary.get('resultado_real_details')
-    title_suffix = f" ({res_details['main_account_name']})" if res_details else ""
-    st.info(f"### Resultado Real{title_suffix}\n# {format_currency(summary['resultado_real'])}")
     if res_details:
+        main_id = res_details['main_account_id']
+        main_real = calculate_real_balance(main_id)
+        st.info(f"### Resultado Real ({res_details['main_account_name']})\n# {format_currency(main_real)}")
         pending_loans = res_details.get('pending_loans', [])
         if pending_loans:
             for l in pending_loans:
@@ -48,9 +49,15 @@ with rc1:
                 loan_fecha = str(l.get('fecha'))[:10]
                 pending_amount = l.get('outstanding_amount', l.get('monto', 0.0))
                 st.markdown(f"<small style='color:#ff4b4b; font-weight:bold;'>- Pending Loan: {format_currency(pending_amount)} from {acc_origen_name} (since {loan_fecha})</small>", unsafe_allow_html=True)
+    else:
+        st.info(f"### Resultado Real\n# {format_currency(summary['resultado_real'])}")
 with rc2:
-    title_suffix = f" ({res_details['main_account_name']})" if res_details else ""
-    st.success(f"### Resultado Proyectado{title_suffix}\n# {format_currency(summary['resultado_proyectado'])}")
+    if res_details:
+        main_id = res_details['main_account_id']
+        main_proj = calculate_projected_balance(main_id)
+        st.success(f"### Resultado Proyectado ({res_details['main_account_name']})\n# {format_currency(main_proj)}")
+    else:
+        st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")
 
 st.divider()
 st.subheader("Budget Usage Breakdown")
@@ -109,8 +116,8 @@ if accounts:
         
         for a in bank_accounts:
             acc_name = a.get('nombre')
-            real_bal = calculate_real_balance_for_month(a['id'], selected_month)
-            proj_bal = calculate_projected_balance_for_month(a['id'], selected_month)
+            real_bal = calculate_real_balance(a['id'])
+            proj_bal = calculate_projected_balance(a['id'])
             
             subtotal_real += real_bal
             subtotal_proj += proj_bal
