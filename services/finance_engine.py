@@ -6,6 +6,21 @@ from services.firestore_service import FirestoreService
 def _get_service(collection_name):
     return FirestoreService(collection_name)
 
+def _to_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        return datetime.strptime(value[:10], "%Y-%m-%d").date()
+    return None
+
+def _month_from_value(value):
+    date_value = _to_date(value)
+    return date_value.strftime("%Y-%m") if date_value else None
+
+def _month_is_on_or_before(value, month: str) -> bool:
+    item_month = _month_from_value(value)
+    return bool(item_month and item_month <= month)
+
 def calculate_salary_net(salary_id: str, month: str) -> float:
     """Calculates the net salary for a given month considering active deductions and overtimes."""
     salary_srv = _get_service("salaries")
@@ -93,40 +108,46 @@ def _get_account_historical_salary_incomes(account_id: str, up_to_month: str = N
 
 def calculate_real_balance(account_id: str) -> float:
     """Calculated as: saldo_inicial + sueldos netos_pasados + ingresos_extra - gastos - transferencias_salientes + transferencias_entrantes"""
+    return calculate_real_balance_for_month(account_id, get_current_month())
+
+def calculate_real_balance_for_month(account_id: str, month: str) -> float:
+    """Real balance of an account up to the selected month (inclusive)."""
     account = _get_service("accounts").get_by_id(account_id)
-    if not account: return 0.0
-    
+    if not account:
+        return 0.0
+
     balance = account.get('saldo_inicial', 0.0)
-    current_m = get_current_month()
-    
-    # Add all past and current month salaries
-    balance += _get_account_historical_salary_incomes(account_id, current_m)
-    
-    # Extra incomes
+
+    # Add all salaries up to the selected month.
+    balance += _get_account_historical_salary_incomes(account_id, month)
+
+    # Extra incomes up to selected month.
     incomes = _get_service("incomes").get_by_field("account_id", "==", account_id)
-    balance += sum(inc.get('monto', 0.0) for inc in incomes)
-    
-    # Expenses (gastos_pagados are essentially the expenses table)
+    balance += sum(inc.get('monto', 0.0) for inc in incomes if _month_is_on_or_before(inc.get('fecha'), month))
+
+    # Expenses up to selected month.
     expenses = _get_service("expenses").get_by_field("account_id", "==", account_id)
-    balance -= sum(exp.get('monto', 0.0) for exp in expenses)
-    
-    # Paid fixed expenses
+    balance -= sum(exp.get('monto', 0.0) for exp in expenses if _month_is_on_or_before(exp.get('fecha'), month))
+
+    # Paid fixed expenses up to selected month.
     fixed_exp_srv = _get_service("fixed_expenses")
     fixed_inst_srv = _get_service("fixed_expense_instances")
     all_fixed = fixed_exp_srv.get_by_field("account_id", "==", account_id)
     for fe in all_fixed:
         instances = fixed_inst_srv.get_by_field("fixed_expense_id", "==", fe['id'])
-        paid_instances = [inst for inst in instances if inst.get('estado') == 'pagado']
+        paid_instances = [
+            inst for inst in instances
+            if inst.get('estado') == 'pagado' and inst.get('mes', '') <= month
+        ]
         balance -= fe.get('monto', 0.0) * len(paid_instances)
-    
-    # Transfers out
+
+    # Transfers up to selected month.
     transfers_out = _get_service("transfers").get_by_field("cuenta_origen", "==", account_id)
-    balance -= sum(tr.get('monto', 0.0) for tr in transfers_out)
-    
-    # Transfers in
+    balance -= sum(tr.get('monto', 0.0) for tr in transfers_out if _month_is_on_or_before(tr.get('fecha'), month))
+
     transfers_in = _get_service("transfers").get_by_field("cuenta_destino", "==", account_id)
-    balance += sum(tr.get('monto', 0.0) for tr in transfers_in)
-    
+    balance += sum(tr.get('monto', 0.0) for tr in transfers_in if _month_is_on_or_before(tr.get('fecha'), month))
+
     return balance
 
 def get_active_budgets(month: str) -> list:
@@ -204,16 +225,18 @@ def calculate_projected_balance(account_id: str) -> float:
        Using the rule: If current month: impacto = max(presupuesto, gasto_real)
        If past month: impacts are already in real balance. Projected only impacts present/future.
     """
-    real = calculate_real_balance(account_id)
-    current_m = get_current_month()
+    return calculate_projected_balance_for_month(account_id, get_current_month())
+
+def calculate_projected_balance_for_month(account_id: str, month: str) -> float:
+    real = calculate_real_balance_for_month(account_id, month)
     
     # Gastos fijos pendientes for current month
-    fixed_this_month = get_fixed_expenses_for_month(current_m)
+    fixed_this_month = get_fixed_expenses_for_month(month)
     fixed_pendientes = sum(fe['monto'] for fe in fixed_this_month if fe['account_id'] == account_id and fe['estado'] == 'impagado')
     
     # Presupuestos
-    active_budgets = get_active_budgets(current_m)
-    spending = calculate_category_spending(current_m, account_id)
+    active_budgets = get_active_budgets(month)
+    spending = calculate_category_spending(month, account_id)
     
     budget_impact = 0.0
     for b in active_budgets:
