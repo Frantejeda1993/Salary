@@ -18,13 +18,36 @@ trf_srv = FirestoreService("transfers")
 accounts = acc_srv.get_all()
 categories = cat_srv.get_all()
 
+
+def build_account_options(account_items):
+    return [
+        {
+            "label": f"{a.get('nombre', 'Unknown Account')} · {str(a.get('id', ''))[:6]}",
+            "id": a.get('id'),
+            "bank_id": a.get('bank_id')
+        }
+        for a in account_items
+    ]
+
+
+def build_category_options(category_items):
+    return [
+        {
+            "label": f"{c.get('nombre', 'Unknown Category')} · {str(c.get('id', ''))[:6]}",
+            "id": c.get('id')
+        }
+        for c in category_items
+    ]
+
 if not accounts:
     st.warning("Please add an Account first.")
 else:
-    acc_options = {a['nombre']: a for a in accounts}
-    cat_options = {c['nombre']: c['id'] for c in categories}
+    acc_options = build_account_options(accounts)
+    cat_options = build_category_options(categories)
     
     tab1, tab2, tab3, tab4 = st.tabs(["Add Expense", "Add Extra Income", "Add Fuel Expense", "Add Loan"])
+    acc_labels = [a['label'] for a in acc_options]
+    cat_labels = [c['label'] for c in cat_options]
     
     with tab1:
         with st.form("add_exp_form", clear_on_submit=True):
@@ -33,21 +56,25 @@ else:
             with col1:
                 nombre = st.text_input("Concept / Name")
                 monto = st.number_input("Amount", min_value=0.0, step=10.0)
-                account_nombre = st.selectbox("Account from", list(acc_options.keys()))
+                account_label = st.selectbox("Account from", acc_labels)
+                selected_acc = next((a for a in acc_options if a['label'] == account_label), None)
             with col2:
                 fecha = st.date_input("Date", value=date.today(), format="DD/MM/YYYY")
-                categoria_nombre = st.selectbox("Category", list(cat_options.keys()) if cat_options else ["None"])
+                categoria_label = st.selectbox("Category", cat_labels if cat_labels else ["None"])
+                selected_cat = next((c for c in cat_options if c['label'] == categoria_label), None)
                 
             if st.form_submit_button("Save Expense") and nombre and monto > 0:
-                selected_acc = acc_options[account_nombre]
-                new_exp = Expense(
+                if not selected_acc:
+                    st.error("Please select a valid account.")
+                else:
+                    new_exp = Expense(
                     nombre=nombre, fecha=fecha, monto=monto,
-                    categoria_id=cat_options.get(categoria_nombre, ''),
+                    categoria_id=selected_cat['id'] if selected_cat else '',
                     bank_id=selected_acc['bank_id'], account_id=selected_acc['id']
                 )
-                exp_srv.add(new_exp.to_dict())
-                st.success("Expense logged.")
-                st.rerun()
+                    exp_srv.add(new_exp.to_dict())
+                    st.success("Expense logged.")
+                    st.rerun()
 
     with tab2:
         with st.form("add_inc_form", clear_on_submit=True):
@@ -56,23 +83,27 @@ else:
             with col1:
                 nombre_inc = st.text_input("Concept / Name (Income)")
                 monto_inc = st.number_input("Amount (Income)", min_value=0.0, step=10.0)
-                account_inc = st.selectbox("Account to", list(acc_options.keys()), key="acc_inc")
+                account_inc_label = st.selectbox("Account to", acc_labels, key="acc_inc")
+                selected_acc_inc = next((a for a in acc_options if a['label'] == account_inc_label), None)
             with col2:
                 fecha_inc = st.date_input("Date (Income)", value=date.today(), key="dt_inc", format="DD/MM/YYYY")
-                cat_options_with_none = ["None"] + list(cat_options.keys())
+                cat_options_with_none = ["None"] + cat_labels
                 categoria_inc = st.selectbox("Category (Optional)", cat_options_with_none, help="If related to a category, it reduces the spent amount.")
                 
             if st.form_submit_button("Save Income") and nombre_inc and monto_inc > 0:
-                selected_acc = acc_options[account_inc]
-                cat_val = '' if categoria_inc == "None" else cat_options[categoria_inc]
-                new_inc = Income(
+                if not selected_acc_inc:
+                    st.error("Please select a valid account.")
+                else:
+                    cat_selected = next((c for c in cat_options if c['label'] == categoria_inc), None)
+                    cat_val = '' if categoria_inc == "None" else (cat_selected['id'] if cat_selected else '')
+                    new_inc = Income(
                     nombre=nombre_inc, fecha=fecha_inc, monto=monto_inc,
                     categoria_id=cat_val,
-                    bank_id=selected_acc['bank_id'], account_id=selected_acc['id']
+                    bank_id=selected_acc_inc['bank_id'], account_id=selected_acc_inc['id']
                 )
-                inc_srv.add(new_inc.to_dict())
-                st.success("Extra Income logged.")
-                st.rerun()
+                    inc_srv.add(new_inc.to_dict())
+                    st.success("Extra Income logged.")
+                    st.rerun()
 
     with tab3:
         with st.form("add_fuel_exp_form", clear_on_submit=True):
@@ -85,8 +116,10 @@ else:
                 price_per_l = st.number_input("Price per L", min_value=0.0, step=0.1, format="%.3f")
             with col2:
                 fecha_fuel = st.date_input("Date", value=date.today(), format="DD/MM/YYYY", key="df")
-                account_fuel = st.selectbox("Account from", list(acc_options.keys()), key="af")
-                categoria_fuel = st.selectbox("Category", list(cat_options.keys()) if cat_options else ["None"], key="cf")
+                account_fuel_label = st.selectbox("Account from", acc_labels, key="af")
+                selected_acc_fuel = next((a for a in acc_options if a['label'] == account_fuel_label), None)
+                categoria_fuel_label = st.selectbox("Category", cat_labels if cat_labels else ["None"], key="cf")
+                selected_cat_fuel = next((c for c in cat_options if c['label'] == categoria_fuel_label), None)
 
             if monto_fuel > 0 and km_done > 0 and price_per_l > 0:
                 cost_per_1km = monto_fuel / km_done
@@ -94,38 +127,44 @@ else:
                 st.info(f"💡 **Calculations**:\n- Cost per 1 km: {format_currency(cost_per_1km)}\n- Cost per 100 km: {format_currency(cost_per_100km)}")
 
             if st.form_submit_button("Save Fuel Expense") and nombre_fuel and monto_fuel > 0:
-                selected_acc = acc_options[account_fuel]
-                new_fuel_exp = FuelExpense(
+                if not selected_acc_fuel:
+                    st.error("Please select a valid account.")
+                else:
+                    new_fuel_exp = FuelExpense(
                     nombre=nombre_fuel, fecha=fecha_fuel, monto=monto_fuel,
-                    categoria_id=cat_options.get(categoria_fuel, ''),
-                    bank_id=selected_acc['bank_id'], account_id=selected_acc['id'],
+                    categoria_id=selected_cat_fuel['id'] if selected_cat_fuel else '',
+                    bank_id=selected_acc_fuel['bank_id'], account_id=selected_acc_fuel['id'],
                     km_done=km_done, price_per_l=price_per_l
                 )
-                exp_srv.add(new_fuel_exp.to_dict())
-                st.success("Fuel Expense logged.")
-                st.rerun()
+                    exp_srv.add(new_fuel_exp.to_dict())
+                    st.success("Fuel Expense logged.")
+                    st.rerun()
 
     with tab4:
         with st.form("add_loan_form", clear_on_submit=True):
             st.subheader("New Loan (Prestamo)")
             col1, col2 = st.columns(2)
             with col1:
-                origen_name = st.selectbox("From Account", list(acc_options.keys()), key="loan_from")
+                origen_label = st.selectbox("From Account", acc_labels, key="loan_from")
+                origen = next((a for a in acc_options if a['label'] == origen_label), None)
                 monto_loan = st.number_input("Amount", min_value=0.0, step=10.0, key="loan_amount")
             with col2:
-                destino_name = st.selectbox("To Account", list(acc_options.keys()), key="loan_to", index=1 if len(acc_options) > 1 else 0)
+                destino_label = st.selectbox("To Account", acc_labels, key="loan_to", index=1 if len(acc_options) > 1 else 0)
+                destino = next((a for a in acc_options if a['label'] == destino_label), None)
                 fecha_loan = st.date_input("Date", value=date.today(), format="DD/MM/YYYY", key="loan_date")
                 
             if st.form_submit_button("Save Loan"):
-                if origen_name == destino_name:
+                if not origen or not destino:
+                    st.error("Please select valid accounts.")
+                elif origen['id'] == destino['id']:
                     st.error("Origin and Destination accounts must be different.")
                 elif monto_loan <= 0:
                     st.error("Amount must be greater than zero.")
                 else:
                     new_loan = Transfer(
                         fecha=fecha_loan,
-                        cuenta_origen=acc_options[origen_name]['id'],
-                        cuenta_destino=acc_options[destino_name]['id'],
+                        cuenta_origen=origen['id'],
+                        cuenta_destino=destino['id'],
                         monto=monto_loan,
                         is_loan=True,
                         status='pending',
@@ -146,23 +185,20 @@ def edit_expense_dialog(exp, acc_op, cat_op):
             
             # Match account
             current_acc_id = exp.get("account_id")
-            acc_names = list(acc_op.keys())
-            try:
-                current_acc_name = next(name for name, acc in acc_op.items() if acc['id'] == current_acc_id)
-                acc_index = acc_names.index(current_acc_name)
-            except StopIteration:
-                acc_index = 0
-            account_nombre = st.selectbox("Account from", acc_names, index=acc_index)
+            acc_labels = [a['label'] for a in acc_op]
+            acc_index = next((i for i, a in enumerate(acc_op) if a['id'] == current_acc_id), 0)
+            account_label = st.selectbox("Account from", acc_labels, index=acc_index)
+            selected_acc = next((a for a in acc_op if a['label'] == account_label), None)
             
         with col2:
             fecha = st.date_input("Date", value=exp.get("fecha", date.today()), format="DD/MM/YYYY")
             
             # Match category
-            cat_names = ["None"] if not cat_op else list(cat_op.keys())
+            cat_names = ["None"] + [c['label'] for c in cat_op]
             current_cat_id = exp.get("categoria_id")
             try:
                 if current_cat_id:
-                    current_cat_name = next(name for name, cid in cat_op.items() if cid == current_cat_id)
+                    current_cat_name = next(c['label'] for c in cat_op if c['id'] == current_cat_id)
                     cat_index = cat_names.index(current_cat_name)
                 else:
                     cat_index = 0
@@ -187,10 +223,12 @@ def edit_expense_dialog(exp, acc_op, cat_op):
 
         if st.form_submit_button("Update Expense"):
             if nombre and monto > 0:
-                selected_acc = acc_op[account_nombre]
+                if not selected_acc:
+                    st.error("Please select a valid account.")
+                    return
                 update_payload = {
                     "nombre": nombre, "fecha": datetime.combine(fecha, datetime.min.time()) if fecha else None, "monto": monto,
-                    "categoria_id": cat_op.get(categoria_nombre, ''),
+                    "categoria_id": next((c['id'] for c in cat_op if c['label'] == categoria_nombre), ''),
                     "bank_id": selected_acc['bank_id'], "account_id": selected_acc['id']
                 }
                 
@@ -212,22 +250,19 @@ def edit_income_dialog(inc, acc_op, cat_op):
             monto_inc = st.number_input("Amount (Income)", value=float(inc.get("monto", 0.0)), min_value=0.0, step=10.0)
             
             current_acc_id = inc.get("account_id")
-            acc_names = list(acc_op.keys())
-            try:
-                current_acc_name = next(name for name, acc in acc_op.items() if acc['id'] == current_acc_id)
-                acc_index = acc_names.index(current_acc_name)
-            except StopIteration:
-                acc_index = 0
-            account_inc = st.selectbox("Account to", acc_names, index=acc_index)
+            acc_labels = [a['label'] for a in acc_op]
+            acc_index = next((i for i, a in enumerate(acc_op) if a['id'] == current_acc_id), 0)
+            account_inc_label = st.selectbox("Account to", acc_labels, index=acc_index)
+            selected_acc = next((a for a in acc_op if a['label'] == account_inc_label), None)
             
         with col2:
             fecha_inc = st.date_input("Date (Income)", value=inc.get("fecha", date.today()), format="DD/MM/YYYY")
-            cat_options_with_none = ["None"] + list(cat_op.keys())
+            cat_options_with_none = ["None"] + [c['label'] for c in cat_op]
             
             current_cat_id = inc.get("categoria_id")
             try:
                 if current_cat_id:
-                    current_cat_name = next(name for name, cid in cat_op.items() if cid == current_cat_id)
+                    current_cat_name = next(c['label'] for c in cat_op if c['id'] == current_cat_id)
                     cat_index = cat_options_with_none.index(current_cat_name)
                 else:
                     cat_index = 0
@@ -238,8 +273,10 @@ def edit_income_dialog(inc, acc_op, cat_op):
             
         if st.form_submit_button("Update Income"):
             if nombre_inc and monto_inc > 0:
-                selected_acc = acc_op[account_inc]
-                cat_val = '' if categoria_inc == "None" else cat_op[categoria_inc]
+                if not selected_acc:
+                    st.error("Please select a valid account.")
+                    return
+                cat_val = '' if categoria_inc == "None" else next((c['id'] for c in cat_op if c['label'] == categoria_inc), '')
                 inc_srv.update(inc["id"], {
                     "nombre": nombre_inc, "fecha": datetime.combine(fecha_inc, datetime.min.time()) if fecha_inc else None, "monto": monto_inc,
                     "categoria_id": cat_val,
@@ -266,9 +303,9 @@ f_col1, f_col2, f_col3 = st.columns(3)
 with f_col1:
     date_filter = st.date_input("Date Range", value=None)
 with f_col2:
-    cat_filter = st.selectbox("Category", ["All"] + list(cat_options.keys()))
+    cat_filter = st.selectbox("Category", ["All"] + cat_labels)
 with f_col3:
-    acc_filter = st.selectbox("Account", ["All"] + list(acc_options.keys()))
+    acc_filter = st.selectbox("Account", ["All"] + acc_labels)
 
 filtered_tx = []
 for tx in all_tx:
@@ -286,13 +323,15 @@ for tx in all_tx:
     # Filter Category
     if cat_filter != "All":
         tx_cat_id = tx.get('categoria_id')
-        if not tx_cat_id or tx_cat_id != cat_options[cat_filter]:
+        selected_cat_filter = next((c for c in cat_options if c['label'] == cat_filter), None)
+        if not tx_cat_id or not selected_cat_filter or tx_cat_id != selected_cat_filter['id']:
             continue
             
     # Filter Account
     if acc_filter != "All":
         tx_acc_id = tx.get('account_id')
-        if not tx_acc_id or tx_acc_id != acc_options[acc_filter]['id']:
+        selected_acc_filter = next((a for a in acc_options if a['label'] == acc_filter), None)
+        if not tx_acc_id or not selected_acc_filter or tx_acc_id != selected_acc_filter['id']:
             continue
             
     filtered_tx.append(tx)

@@ -11,14 +11,26 @@ acc_srv = FirestoreService("accounts")
 banks = bank_srv.get_all()
 accounts = acc_srv.get_all()
 
+
+def build_bank_options(bank_items):
+    return [
+        {
+            "label": f"{b.get('nombre', 'Unknown Bank')} · {str(b.get('id', ''))[:6]}",
+            "id": b.get("id"),
+        }
+        for b in bank_items
+    ]
+
 if not banks:
     st.warning("Please add a Bank first before creating an Account.")
 else:
-    bank_options = {b['nombre']: b['id'] for b in banks}
+    bank_options = build_bank_options(banks)
 
     with st.expander("Add New Account", expanded=False):
         with st.form("add_acc_form", clear_on_submit=True):
-            bank_name = st.selectbox("Bank", list(bank_options.keys()))
+            bank_labels = [b["label"] for b in bank_options]
+            bank_label = st.selectbox("Bank", bank_labels)
+            selected_bank = next((b for b in bank_options if b["label"] == bank_label), None)
             nombre = st.text_input("Account Name")
             saldo_inicial = st.number_input("Initial Balance", value=0.0, step=100.0)
             
@@ -27,7 +39,7 @@ else:
             if submitted:
                 if nombre:
                     new_acc = Account(
-                        bank_id=bank_options[bank_name],
+                        bank_id=selected_bank["id"] if selected_bank else None,
                         nombre=nombre,
                         saldo_inicial=saldo_inicial
                     )
@@ -41,14 +53,11 @@ else:
 def edit_account_dialog(account, bank_options):
     with st.form(f"edit_acc_form_{account['id']}", clear_on_submit=False):
         current_bank_id = account.get("bank_id")
-        bank_names = list(bank_options.keys())
-        try:
-            current_bank_name = next(name for name, bid in bank_options.items() if bid == current_bank_id)
-            bank_index = bank_names.index(current_bank_name)
-        except StopIteration:
-            bank_index = 0
+        bank_labels = [b["label"] for b in bank_options]
+        bank_index = next((i for i, b in enumerate(bank_options) if b["id"] == current_bank_id), 0)
             
-        bank_name = st.selectbox("Bank", bank_names, index=bank_index)
+        bank_label = st.selectbox("Bank", bank_labels, index=bank_index)
+        selected_bank = next((b for b in bank_options if b["label"] == bank_label), None)
         nombre = st.text_input("Account Name", value=account.get("nombre", ""))
         saldo_inicial = st.number_input("Initial Balance", value=float(account.get("saldo_inicial", 0.0)), step=100.0)
         
@@ -56,7 +65,7 @@ def edit_account_dialog(account, bank_options):
         if submitted:
             if nombre:
                 acc_srv.update(account["id"], {
-                    "bank_id": bank_options[bank_name],
+                    "bank_id": selected_bank["id"] if selected_bank else None,
                     "nombre": nombre,
                     "saldo_inicial": saldo_inicial
                 })
@@ -96,7 +105,7 @@ if accounts:
             
         with st.popover("⚙️", use_container_width=True):
             if st.button("Edit", key=f"edit_{a['id']}", use_container_width=True):
-                bank_options_pass = {b['nombre']: b['id'] for b in banks}
+                bank_options_pass = build_bank_options(banks)
                 edit_account_dialog(a, bank_options_pass)
             
             if st.button("Delete", key=f"del_{a['id']}", type="primary", use_container_width=True):
