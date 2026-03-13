@@ -2,6 +2,17 @@ from dataclasses import dataclass, field
 from datetime import datetime, date
 from typing import Optional
 
+
+def _normalize_percentage_to_0_100(value: float) -> float:
+    """Normalizes percentage values to 0-100 scale.
+
+    Defensive migration: legacy values (0-1) are treated as fractions.
+    """
+    pct = float(value)
+    if 0.0 <= pct <= 1.0:
+        return pct * 100.0
+    return pct
+
 @dataclass
 class Salary:
     nombre: str
@@ -49,9 +60,18 @@ class Salary:
             for name, val_key, extra_key, default_val in old_mapping:
                 deductions.append({
                     "name": name,
-                    "percentage": float(data.get(val_key, default_val)) / 100.0,
+                    "percentage": _normalize_percentage_to_0_100(float(data.get(val_key, default_val))),
                     "applies_to_extras": bool(data.get(extra_key, False))
                 })
+        else:
+            deductions = [
+                {
+                    "name": d.get("name", ""),
+                    "percentage": _normalize_percentage_to_0_100(d.get("percentage", 0.0)),
+                    "applies_to_extras": bool(d.get("applies_to_extras", False))
+                }
+                for d in deductions
+            ]
 
         return cls(
             id=doc_id,

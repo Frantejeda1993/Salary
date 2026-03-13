@@ -6,6 +6,33 @@ from services.firestore_service import FirestoreService
 def _get_service(collection_name):
     return FirestoreService(collection_name)
 
+
+def _normalize_percentage_to_0_100(value: float) -> float:
+    """Normalizes percentages to 0-100 scale.
+
+    Defensive migration: legacy values in [0, 1] are treated as fractions.
+    """
+    pct = float(value)
+    if 0.0 <= pct <= 1.0:
+        return pct * 100.0
+    return pct
+
+
+def _normalize_deductions_to_0_100(deductions: list[dict]) -> tuple[list[dict], bool]:
+    normalized = []
+    changed = False
+    for d in deductions:
+        raw = d.get("percentage", 0.0)
+        norm = _normalize_percentage_to_0_100(raw)
+        if float(raw) != norm:
+            changed = True
+        normalized.append({
+            "name": d.get("name", ""),
+            "percentage": norm,
+            "applies_to_extras": bool(d.get("applies_to_extras", False))
+        })
+    return normalized, changed
+
 def calculate_salary_net(salary_id: str, month: str) -> float:
     """Calculates the net salary for a given month considering active deductions and overtimes."""
     salary_srv = _get_service("salaries")
@@ -27,8 +54,13 @@ def calculate_salary_net(salary_id: str, month: str) -> float:
     total_deductions = 0.0
     
     if 'deductions' in salary_data and isinstance(salary_data['deductions'], list):
-        for d in salary_data['deductions']:
-            percent = float(d.get('percentage', 0.0))
+        normalized_deductions, changed = _normalize_deductions_to_0_100(salary_data['deductions'])
+        if changed:
+            salary_srv.update(salary_id, {"deductions": normalized_deductions})
+
+        for d in normalized_deductions:
+            raw_percent = float(d.get('percentage', 0.0))
+            percent = raw_percent / 100.0
             apply_extra = d.get('applies_to_extras', False)
             
             base_for_deduction = bruto

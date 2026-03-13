@@ -13,6 +13,23 @@ sal_srv = FirestoreService("salaries")
 ot_srv = FirestoreService("overtimes")
 acc_srv = FirestoreService("accounts")
 
+
+def normalize_percentage_to_0_100(value: float) -> float:
+    pct = float(value)
+    if 0.0 <= pct <= 1.0:
+        return pct * 100.0
+    return pct
+
+
+def validate_deductions_percentages(deductions: list[dict]) -> tuple[bool, str]:
+    for d in deductions:
+        pct = float(d.get("percentage", 0.0))
+        if pct < 0 or pct > 100:
+            name = d.get("name", "(unnamed deduction)")
+            return False, f"Invalid percentage in '{name}': {pct}. Use values between 0 and 100."
+    return True, ""
+
+
 accounts = acc_srv.get_all()
 salaries = sal_srv.get_all()
 
@@ -36,11 +53,11 @@ else:
                 
             st.subheader("Deductions (%)")
             default_deductions = [
-                {"name": "Cont. Común", "percentage": 0.1500, "applies_to_extras": True},
-                {"name": "MEI", "percentage": 0.0010, "applies_to_extras": True},
-                {"name": "Formación", "percentage": 0.0010, "applies_to_extras": True},
-                {"name": "Desempleo", "percentage": 0.0010, "applies_to_extras": True},
-                {"name": "IRPF", "percentage": 0.0000, "applies_to_extras": True},
+                {"name": "Cont. Común", "percentage": 15.0, "applies_to_extras": True},
+                {"name": "MEI", "percentage": 0.1, "applies_to_extras": True},
+                {"name": "Formación", "percentage": 0.1, "applies_to_extras": True},
+                {"name": "Desempleo", "percentage": 0.1, "applies_to_extras": True},
+                {"name": "IRPF", "percentage": 0.0, "applies_to_extras": True},
             ]
             
             edited_deductions = st.data_editor(
@@ -52,8 +69,8 @@ else:
                         "Deduction (%)",
                         min_value=0.0,
                         max_value=100.0,
-                        step=0.0001,
-                        format="%.4f",
+                        step=0.1,
+                        format="%.2f",
                         required=True
                     ),
                     "applies_to_extras": st.column_config.CheckboxColumn("Applies to Extras", default=True)
@@ -61,6 +78,7 @@ else:
                 key="new_salary_deductions",
                 use_container_width=True
             )
+            st.caption("Formato de porcentaje: usa escala 0-100 (ej: 15.0 para 15%, 0.1 para 0.1%).")
             
             submitted = st.form_submit_button("Save Salary")
             
@@ -70,11 +88,15 @@ else:
                 final_deductions = [
                     {
                         "name": d.get("name", ""),
-                        "percentage": float(d.get("percentage", 0.0)),
+                        "percentage": normalize_percentage_to_0_100(d.get("percentage", 0.0)),
                         "applies_to_extras": bool(d.get("applies_to_extras", False))
                     } for d in edited_deductions if d.get("name")
                 ]
-                
+                valid, msg = validate_deductions_percentages(final_deductions)
+                if not valid:
+                    st.error(msg)
+                    st.stop()
+
                 new_sal = Salary(
                     nombre=nombre, salario_bruto=salario_bruto,
                     deductions=final_deductions,
@@ -115,12 +137,21 @@ def edit_salary_dialog(salary, acc_options):
         current_deductions = salary.get("deductions")
         if not current_deductions:
             current_deductions = [
-                {"name": "Cont. Común", "percentage": float(salary.get("cont_comun", 15.0)) / 100.0, "applies_to_extras": bool(salary.get("cont_comun_aplica_extras", True))},
-                {"name": "MEI", "percentage": float(salary.get("mei", 0.1)) / 100.0, "applies_to_extras": bool(salary.get("mei_aplica_extras", True))},
-                {"name": "Formación", "percentage": float(salary.get("formacion", 0.1)) / 100.0, "applies_to_extras": bool(salary.get("formacion_aplica_extras", True))},
-                {"name": "Desempleo", "percentage": float(salary.get("desempleo", 0.1)) / 100.0, "applies_to_extras": bool(salary.get("desempleo_aplica_extras", True))},
-                {"name": "IRPF", "percentage": float(salary.get("irpf", 0.0)) / 100.0, "applies_to_extras": bool(salary.get("irpf_aplica_extras", True))},
+                {"name": "Cont. Común", "percentage": float(salary.get("cont_comun", 15.0)), "applies_to_extras": bool(salary.get("cont_comun_aplica_extras", True))},
+                {"name": "MEI", "percentage": float(salary.get("mei", 0.1)), "applies_to_extras": bool(salary.get("mei_aplica_extras", True))},
+                {"name": "Formación", "percentage": float(salary.get("formacion", 0.1)), "applies_to_extras": bool(salary.get("formacion_aplica_extras", True))},
+                {"name": "Desempleo", "percentage": float(salary.get("desempleo", 0.1)), "applies_to_extras": bool(salary.get("desempleo_aplica_extras", True))},
+                {"name": "IRPF", "percentage": float(salary.get("irpf", 0.0)), "applies_to_extras": bool(salary.get("irpf_aplica_extras", True))},
             ]
+
+        current_deductions = [
+            {
+                "name": d.get("name", ""),
+                "percentage": normalize_percentage_to_0_100(d.get("percentage", 0.0)),
+                "applies_to_extras": bool(d.get("applies_to_extras", False))
+            }
+            for d in current_deductions
+        ]
             
         edited_deductions = st.data_editor(
             current_deductions,
@@ -131,8 +162,8 @@ def edit_salary_dialog(salary, acc_options):
                     "Deduction (%)",
                     min_value=0.0,
                     max_value=100.0,
-                    step=0.0001,
-                    format="%.4f",
+                    step=0.1,
+                    format="%.2f",
                     required=True
                 ),
                 "applies_to_extras": st.column_config.CheckboxColumn("Applies to Extras", default=True)
@@ -140,7 +171,8 @@ def edit_salary_dialog(salary, acc_options):
             key=f"edit_salary_deductions_{salary['id']}",
             use_container_width=True
         )
-            
+        st.caption("Formato de porcentaje: usa escala 0-100 (ej: 15.0 para 15%, 0.1 para 0.1%).")
+
         submitted = st.form_submit_button("Update Salary")
         
         if submitted:
@@ -150,11 +182,15 @@ def edit_salary_dialog(salary, acc_options):
                 final_deductions = [
                     {
                         "name": d.get("name", ""),
-                        "percentage": float(d.get("percentage", 0.0)),
+                        "percentage": normalize_percentage_to_0_100(d.get("percentage", 0.0)),
                         "applies_to_extras": bool(d.get("applies_to_extras", False))
                     } for d in edited_deductions if d.get("name")
                 ]
-                
+                valid, msg = validate_deductions_percentages(final_deductions)
+                if not valid:
+                    st.error(msg)
+                    st.stop()
+
                 sal_srv.update(salary["id"], {
                     "nombre": nombre, "salario_bruto": salario_bruto,
                     "deductions": final_deductions,
