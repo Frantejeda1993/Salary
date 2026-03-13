@@ -50,13 +50,15 @@ class FixedExpenseInstance:
     fixed_expense_id: str
     mes: str  # Format YYYY-MM
     estado: str  # "pagado" / "impagado"
+    monto: Optional[float] = None
     id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
             "fixed_expense_id": self.fixed_expense_id,
             "mes": self.mes,
-            "estado": self.estado
+            "estado": self.estado,
+            "monto": self.monto
         }
 
     @classmethod
@@ -65,5 +67,6 @@ class FixedExpenseInstance:
             id=doc_id,
             fixed_expense_id=data.get('fixed_expense_id', ''),
             mes=data.get('mes', ''),
-            estado=data.get('estado', 'impagado')
+            estado=data.get('estado', 'impagado'),
+            monto=data.get('monto')
         )

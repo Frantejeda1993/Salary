@@ -84,34 +84,53 @@ active_fes = get_fixed_expenses_for_month(selected_month)
 if active_fes:
     st.write(f"Fixed Expenses for **{selected_month}**:")
     for fe in active_fes:
-        col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+        col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 2])
         col1.markdown(f"**{fe['nombre']}**")
-        col2.write(format_currency(fe['monto']))
-        
+
+        display_amount = fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto']
+        col2.write(format_currency(display_amount))
+
         estado = fe['estado']
         color = "green" if estado == "pagado" else "red"
         col3.markdown(f":{color}[{estado.upper()}]")
-        
+
+        amount_key = f"paid_amount_{fe['id']}_{selected_month}"
+        default_amount = float(fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto'])
+        paid_amount = col4.number_input(
+            "Paid Amount",
+            min_value=0.0,
+            value=default_amount,
+            step=100.0,
+            key=amount_key,
+            label_visibility="collapsed"
+        )
+
         btn_label = "Mark Unpaid" if estado == "pagado" else "Mark Paid"
-        
-        if col4.button(btn_label, key=f"toggle_{fe['id']}_{selected_month}"):
+
+        if col5.button(btn_label, key=f"toggle_{fe['id']}_{selected_month}"):
             # Check if an instance already exists
             instances = fei_srv.get_by_field("fixed_expense_id", "==", fe['id'])
             inst = next((i for i in instances if i['mes'] == selected_month), None)
-            
+
             new_estado = "impagado" if estado == "pagado" else "pagado"
-            
+
             if inst:
                 inst_id = inst['id']
-                fei_srv.update(inst_id, {"estado": new_estado})
+                update_data = {"estado": new_estado}
+                if new_estado == "pagado":
+                    update_data["monto"] = float(paid_amount)
+                else:
+                    update_data["monto"] = None
+                fei_srv.update(inst_id, update_data)
             else:
                 new_inst = FixedExpenseInstance(
                     fixed_expense_id=fe['id'],
                     mes=selected_month,
-                    estado=new_estado
+                    estado=new_estado,
+                    monto=float(paid_amount) if new_estado == "pagado" else None
                 )
                 fei_srv.add(new_inst.to_dict())
-                
+
             st.rerun()
 else:
     st.info("No active fixed expenses for this month.")
