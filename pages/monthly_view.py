@@ -70,7 +70,11 @@ if active_budgets:
     
     for b in active_budgets:
         cat_name = categories.get(b.get('categoria_id'), 'Unknown Category')
-        acc_name = bank_lookup.get(acc_srv.get_by_id(b.get('account_id')).get('bank_id'), '') + ' - ' + acc_srv.get_by_id(b.get('account_id')).get('nombre', '') if b.get('account_id') else ''
+        acc = acc_srv.get_by_id(b.get('account_id')) if b.get('account_id') else None
+        if acc:
+            acc_name = f"{bank_lookup.get(acc.get('bank_id'), 'Banco desconocido')} - {acc.get('nombre', 'Cuenta')}"
+        else:
+            acc_name = "Cuenta eliminada" if b.get('account_id') else ''
         
         limit = b.get('monto', 0.0)
         used = spending.get(b.get('categoria_id'), 0.0)
@@ -140,4 +144,3 @@ if accounts:
     st.dataframe(df.style.apply(highlight_subtotal, axis=1), use_container_width=True, hide_index=True)
 else:
     st.info("No accounts to display.")
-
