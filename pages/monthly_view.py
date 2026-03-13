@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending
+from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending, get_fixed_expenses_for_month
 from utils.date_utils import get_current_month, get_month_options
 from services.firestore_service import FirestoreService
 from utils.money_utils import format_currency
@@ -97,6 +97,43 @@ if active_budgets:
         st.write("") # spacing
 else:
     st.info("No active budgets for this month.")
+
+st.divider()
+st.subheader("Fixed Expenses Status")
+
+fixed_expenses = get_fixed_expenses_for_month(selected_month)
+if fixed_expenses:
+    account_lookup = {a['id']: a for a in accounts}
+    fixed_rows = []
+    for fe in fixed_expenses:
+        account = account_lookup.get(fe.get('account_id'))
+        if account:
+            bank_name = bank_lookup.get(account.get('bank_id'), 'Unknown Bank')
+            account_name = account.get('nombre', 'Unknown Account')
+            debit_account = f"{bank_name} - {account_name}"
+        else:
+            debit_account = "Deleted account"
+
+        estado = fe.get('estado', 'impagado')
+        estado_badge = "🟢 Paid" if estado == 'pagado' else "🟠 Pending"
+        amount = fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe.get('monto', 0.0)
+
+        fixed_rows.append({
+            "Expense": fe.get('nombre', 'Unnamed fixed expense'),
+            "Status": estado_badge,
+            "Amount": format_currency(amount),
+            "Debit Account": debit_account
+        })
+
+    st.dataframe(pd.DataFrame(fixed_rows), use_container_width=True, hide_index=True)
+
+    paid_count = sum(1 for fe in fixed_expenses if fe.get('estado') == 'pagado')
+    pending_count = len(fixed_expenses) - paid_count
+    c1, c2 = st.columns(2)
+    c1.metric("Paid", paid_count)
+    c2.metric("Pending", pending_count)
+else:
+    st.info("No active fixed expenses for this month.")
 
 st.divider()
 st.subheader("Balances per Account")
