@@ -200,9 +200,11 @@ def calculate_category_spending(month: str, account_id: str = None) -> dict:
     return spending
 
 def calculate_projected_balance(account_id: str) -> float:
-    """saldo_proyectado = saldo_real - gastos_fijos_pendientes - presupuestos
-       Using the rule: If current month: impacto = max(presupuesto, gasto_real)
-       If past month: impacts are already in real balance. Projected only impacts present/future.
+    """Calcula el saldo proyectado del mes actual.
+
+    El saldo real ya incluye los gastos reales registrados. Por eso aquí solo se resta:
+    - gastos fijos impagados del mes actual, y
+    - la parte pendiente de cada presupuesto activo (presupuesto - gasto_real, si es positiva).
     """
     real = calculate_real_balance(account_id)
     current_m = get_current_month()
@@ -215,34 +217,14 @@ def calculate_projected_balance(account_id: str) -> float:
     active_budgets = get_active_budgets(current_m)
     spending = calculate_category_spending(current_m, account_id)
     
-    budget_impact = 0.0
-    for b in active_budgets:
-        if b['account_id'] != account_id: continue
-        cat_id = b['categoria_id']
-        presupuesto = b['monto']
-        real_spent = spending.get(cat_id, 0.0)
-        
-        impacto_categoria = max(presupuesto, real_spent)
-        budget_impact += impacto_categoria
-        
-    # Subtract regular unbudgeted expenses? 
-    # The rule says: saldo_proyectado = saldo_real - gastos_fijos_pendientes - presupuestos
-    # But real balance already subtracted real expenses for this month. 
-    # If we subtract max(presupuesto, real_spent) from real balance, we might double subtract real_spent if real_spent > presupuesto
-    # because real_spent is ALREADY subtracted in calculate_real_balance!
-    # Let's adjust:
-    # We must only subtract the REMAINING budget or EXCLUDED budget.
-    # Impact on projected (beyond what's in real):
-    # If real_spent < presupuesto: pending impact is (presupuesto - real_spent)
-    # If real_spent >= presupuesto: pending impact is 0 (as it's already fully realized in real balance)
-    
+    # Solo resta la parte de presupuesto que aún no se ha ejecutado en gasto real.
     pending_budget_impact = 0.0
     for b in active_budgets:
         if b['account_id'] != account_id: continue
         cat_id = b['categoria_id']
         presupuesto = b['monto']
         real_spent = spending.get(cat_id, 0.0)
-        
+
         if real_spent < presupuesto:
             pending_budget_impact += (presupuesto - real_spent)
             
