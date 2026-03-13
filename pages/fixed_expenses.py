@@ -9,10 +9,14 @@ from utils.money_utils import format_currency
 st.title("📆 Fixed Expenses Management")
 
 acc_srv = FirestoreService("accounts")
+bank_srv = FirestoreService("banks")
 fe_srv = FirestoreService("fixed_expenses")
 fei_srv = FirestoreService("fixed_expense_instances")
 
 accounts = acc_srv.get_all()
+banks = bank_srv.get_all()
+bank_lookup = {b.get('id'): b.get('nombre', 'Unknown Bank') for b in banks}
+account_lookup = {a.get('id'): a for a in accounts}
 
 
 def build_account_options(account_items):
@@ -84,20 +88,28 @@ active_fes = get_fixed_expenses_for_month(selected_month)
 if active_fes:
     st.write(f"Fixed Expenses for **{selected_month}**:")
     for fe in active_fes:
-        col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 2])
+        col1, col2, col3, col4, col5, col6 = st.columns([3, 2, 3, 2, 2, 2])
         col1.markdown(f"**{fe['nombre']}**")
 
         display_amount = fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto']
         col2.write(format_currency(display_amount))
 
+        account = account_lookup.get(fe.get('account_id'))
+        if account:
+            bank_name = bank_lookup.get(account.get('bank_id'), 'Unknown Bank')
+            account_label = f"{bank_name} - {account.get('nombre', 'Unknown Account')}"
+        else:
+            account_label = "Deleted account"
+        col3.caption(f"Debited from: {account_label}")
+
         estado = fe['estado']
         color = "green" if estado == "pagado" else "red"
-        col3.markdown(f":{color}[{estado.upper()}]")
+        col4.markdown(f":{color}[{estado.upper()}]")
 
         amount_key = f"paid_amount_{fe['id']}_{selected_month}"
         default_amount = float(fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto'])
         min_paid_amount = min(0.0, default_amount)
-        paid_amount = col4.number_input(
+        paid_amount = col5.number_input(
             "Paid Amount",
             min_value=min_paid_amount,
             value=default_amount,
@@ -108,7 +120,7 @@ if active_fes:
 
         btn_label = "Mark Unpaid" if estado == "pagado" else "Mark Paid"
 
-        if col5.button(btn_label, key=f"toggle_{fe['id']}_{selected_month}"):
+        if col6.button(btn_label, key=f"toggle_{fe['id']}_{selected_month}"):
             # Check if an instance already exists
             instances = fei_srv.get_by_field("fixed_expense_id", "==", fe['id'])
             inst = next((i for i in instances if i['mes'] == selected_month), None)
