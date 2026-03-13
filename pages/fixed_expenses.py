@@ -96,9 +96,10 @@ if active_fes:
 
         amount_key = f"paid_amount_{fe['id']}_{selected_month}"
         default_amount = float(fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto'])
+        min_paid_amount = min(0.0, default_amount)
         paid_amount = col4.number_input(
             "Paid Amount",
-            min_value=0.0,
+            min_value=min_paid_amount,
             value=default_amount,
             step=100.0,
             key=amount_key,
