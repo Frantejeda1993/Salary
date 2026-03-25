@@ -36,28 +36,9 @@ st.metric("Total Presupuestado", format_currency(summary['presupuestos']))
 st.divider()
 rc1, rc2 = st.columns(2)
 with rc1:
-    res_details = summary.get('resultado_real_details')
-    if res_details:
-        main_id = res_details['main_account_id']
-        main_real = calculate_real_balance(main_id)
-        st.info(f"### Resultado Real ({res_details['main_account_name']})\n# {format_currency(main_real)}")
-        pending_loans = res_details.get('pending_loans', [])
-        if pending_loans:
-            for l in pending_loans:
-                acc_origen = acc_srv.get_by_id(l['cuenta_origen'])
-                acc_origen_name = acc_origen.get('nombre', 'Unknown Account') if acc_origen else 'Unknown Account'
-                loan_fecha = str(l.get('fecha'))[:10]
-                pending_amount = l.get('outstanding_amount', l.get('monto', 0.0))
-                st.markdown(f"<small style='color:#ff4b4b; font-weight:bold;'>- Pending Loan: {format_currency(pending_amount)} from {acc_origen_name} (since {loan_fecha})</small>", unsafe_allow_html=True)
-    else:
-        st.info(f"### Resultado Real\n# {format_currency(summary['resultado_real'])}")
+    st.info(f"### Resultado Real\n# {format_currency(summary['resultado_real'])}")
 with rc2:
-    if res_details:
-        main_id = res_details['main_account_id']
-        main_proj = calculate_projected_balance(main_id)
-        st.success(f"### Resultado Proyectado ({res_details['main_account_name']})\n# {format_currency(main_proj)}")
-    else:
-        st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")
+    st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")
 
 st.divider()
 st.subheader("Budget Usage Breakdown")
