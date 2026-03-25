@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from dateutil.relativedelta import relativedelta
 from utils.date_utils import is_active_in_month, get_current_month, parse_month
 from services.firestore_service import FirestoreService
 
@@ -60,6 +61,101 @@ def resolve_main_account_for_month(month: str) -> Optional[dict]:
 
     accounts = _get_service("accounts").get_all()
     return next((a for a in accounts if a.get("is_main", False)), None)
+
+
+def _calculate_main_account_result_for_month(account_id: str, month: str, remaining_from_previous_month: float = 0.0) -> float:
+    """Calcula el resultado real de una cuenta principal para un mes."""
+    salaries = _get_service("salaries").get_all()
+    expenses = _get_service("expenses").get_all()
+    incomes = _get_service("incomes").get_all()
+    fixed_all = get_fixed_expenses_for_month(month)
+
+    main_salaries = sum(calculate_salary_net(s['id'], month) for s in salaries if s.get('account_id') == account_id and is_active_in_month(
+        s['fecha_inicio'].date() if isinstance(s['fecha_inicio'], datetime) else datetime.strptime(s['fecha_inicio'][:10], "%Y-%m-%d").date(),
+        s['fecha_fin'].date() if isinstance(s['fecha_fin'], datetime) else datetime.strptime(s['fecha_fin'][:10], "%Y-%m-%d").date() if s.get('fecha_fin') else None,
+        month
+    ))
+
+    main_fixed = sum(
+        (fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto'])
+        for fe in fixed_all
+        if fe.get('account_id') == account_id and fe['estado'] == 'pagado'
+    )
+    main_expenses = sum(
+        e['monto'] for e in expenses
+        if e.get('account_id') == account_id and
+        (e['fecha'].date() if isinstance(e['fecha'], datetime) else datetime.strptime(e['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+    )
+
+    main_base_incomes = sum(
+        i['monto'] for i in incomes
+        if i.get('account_id') == account_id and
+        (i['fecha'].date() if isinstance(i['fecha'], datetime) else datetime.strptime(i['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+    )
+    main_loans_total = sum(
+        l.get('outstanding_amount', l.get('monto', 0.0))
+        for l in get_pending_loans_for_account(account_id, month)
+    )
+    main_extra_incomes = main_base_incomes + main_loans_total
+
+    return remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed
+
+
+def run_month_rollover_if_needed(today=None) -> dict:
+    """Cierra el mes anterior y abre el mes actual de forma idempotente."""
+    today_date = today.date() if isinstance(today, datetime) else today
+    if today_date is None:
+        today_date = datetime.now().date()
+
+    current_month = today_date.strftime("%Y-%m")
+    previous_month = (today_date.replace(day=1) - relativedelta(months=1)).strftime("%Y-%m")
+    min_managed_month = "2026-03"
+
+    if current_month < min_managed_month:
+        return {
+            "current_month": current_month,
+            "previous_month": previous_month,
+            "skipped": True
+        }
+
+    closed_result = None
+    previous_main = resolve_main_account_for_month(previous_month) if previous_month >= min_managed_month else None
+    if previous_main:
+        previous_account_id = previous_main["id"]
+        previous_snapshot = get_monthly_account_snapshot(previous_month, previous_account_id)
+        previous_remaining = float(previous_snapshot.get("remaining_from_previous_month", 0.0)) if previous_snapshot else 0.0
+
+        if previous_snapshot and previous_snapshot.get("status") == "closed":
+            closed_result = float(previous_snapshot.get("resultado_real_closed", 0.0))
+        else:
+            closed_result = _calculate_main_account_result_for_month(previous_account_id, previous_month, previous_remaining)
+            upsert_monthly_account_snapshot(previous_month, previous_account_id, {
+                "is_main_account_for_month": True,
+                "remaining_from_previous_month": previous_remaining,
+                "resultado_real_closed": closed_result,
+                "status": "closed",
+            })
+
+    current_main = resolve_main_account_for_month(current_month)
+    if current_main:
+        current_account_id = current_main["id"]
+        current_snapshot = get_monthly_account_snapshot(current_month, current_account_id)
+        current_status = current_snapshot.get("status") if current_snapshot else "open"
+        carry_value = float(closed_result if closed_result is not None else 0.0)
+
+        upsert_monthly_account_snapshot(current_month, current_account_id, {
+            "is_main_account_for_month": True,
+            "remaining_from_previous_month": carry_value,
+            "resultado_real_closed": float(current_snapshot.get("resultado_real_closed", 0.0)) if current_snapshot else 0.0,
+            "status": "closed" if current_status == "closed" else "open",
+        })
+
+    return {
+        "current_month": current_month,
+        "previous_month": previous_month,
+        "closed_result": closed_result,
+        "skipped": False
+    }
 
 def calculate_salary_net(salary_id: str, month: str) -> float:
     """Calculates the net salary for a given month considering active deductions and overtimes."""
