@@ -1,7 +1,6 @@
 from datetime import datetime
 from utils.date_utils import is_active_in_month, get_current_month, parse_month
 from services.firestore_service import FirestoreService
-from dateutil.relativedelta import relativedelta
 
 # Services for easy access
 def _get_service(collection_name):
@@ -247,32 +246,6 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
         ]
     return pending_loans
 
-def _previous_month(month: str) -> str:
-    """Returns previous month in YYYY-MM format."""
-    return (parse_month(month) - relativedelta(months=1)).strftime("%Y-%m")
-
-def _calculate_monthly_rollover_results(month: str, ingreso_total: float, presupuestos_total: float, gastos_fijos_total: float) -> tuple[float, float]:
-    """Calcula resultado real/proyectado usando arrastre del mes anterior.
-
-    Reglas:
-    - Resultado Real = Ingreso Total del mes + Resultado Proyectado del mes anterior
-    - Resultado Proyectado = Resultado Real - Presupuestos del mes - Gastos Fijos del mes
-
-    Caso base:
-    - Si el mes es el actual, se parte de 0 como resultado proyectado anterior.
-    """
-    current_month = get_current_month()
-    prev_projected = 0.0
-
-    if month != current_month:
-        prev_month = _previous_month(month)
-        prev_summary = get_month_summary(prev_month)
-        prev_projected = prev_summary.get("resultado_proyectado", 0.0)
-
-    resultado_real = ingreso_total + prev_projected
-    resultado_proyectado = resultado_real - presupuestos_total - gastos_fijos_total
-    return resultado_real, resultado_proyectado
-
 def get_month_summary(month: str) -> dict:
     """Returns summary for month view."""
     # Ingreso total, Gastos fijos, Presupuestos, Gastos reales, Ingresos extra
@@ -306,12 +279,52 @@ def get_month_summary(month: str) -> dict:
     
     ingresos_extra_total = ingresos_extra_base + loans_this_month
     
-    resultado_real, resultado_proyectado = _calculate_monthly_rollover_results(
-        month=month,
-        ingreso_total=ingreso_total,
-        presupuestos_total=presupuestos_total,
-        gastos_fijos_total=gastos_fijos_total
-    )
+    # Calculate Results
+    fixed_paid = sum((fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto']) for fe in fixed_all if fe['estado'] == 'pagado')
+    
+    # Identify Main Account for "Resultado Real"
+    acc_srv = _get_service("accounts")
+    accounts = acc_srv.get_all()
+    main_acc = next((a for a in accounts if a.get('is_main', False)), None)
+    
+    resultado_real_details = None
+    if main_acc:
+        main_id = main_acc['id']
+        main_salaries = sum(calculate_salary_net(s['id'], month) for s in salaries if s.get('account_id') == main_id and is_active_in_month(
+            s['fecha_inicio'].date() if isinstance(s['fecha_inicio'], datetime) else datetime.strptime(s['fecha_inicio'][:10], "%Y-%m-%d").date(),
+            s['fecha_fin'].date() if isinstance(s['fecha_fin'], datetime) else datetime.strptime(s['fecha_fin'][:10], "%Y-%m-%d").date() if s.get('fecha_fin') else None,
+            month
+        ))
+        
+        main_fixed = sum((fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto']) for fe in fixed_all if fe.get('account_id') == main_id and fe['estado'] == 'pagado')
+        main_expenses = sum(e['monto'] for e in expenses if e.get('account_id') == main_id and (e['fecha'].date() if isinstance(e['fecha'], datetime) else datetime.strptime(e['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month)
+        
+        main_base_incomes = sum(i['monto'] for i in incomes if i.get('account_id') == main_id and (i['fecha'].date() if isinstance(i['fecha'], datetime) else datetime.strptime(i['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month)
+        main_loans = get_pending_loans_for_account(main_id, month)
+        main_loans_total = sum(l.get('outstanding_amount', l.get('monto', 0.0)) for l in main_loans)
+        
+        main_extra_incomes = main_base_incomes + main_loans_total
+        
+        resultado_real = main_salaries + main_extra_incomes - main_expenses - main_fixed
+        resultado_real_details = {
+            "main_account_id": main_id,
+            "main_account_name": main_acc.get('nombre', 'Main'),
+            "pending_loans": get_pending_loans_for_account(main_id) # all pending loans for the main account, regardless of month
+        }
+    else:
+        resultado_real = ingreso_total + ingresos_extra_total - gastos_reales - fixed_paid
+    
+    # Projected Result for the month = Ingreso_Total + Ingresos_Extra - Gastos fijos - max(Presupuestos, Gastos_Reales for budget categories) - Unbudgeted Gastos
+    spending = calculate_category_spending(month)
+    impacto_presupuestos = 0.0
+    budget_cat_ids = [b['categoria_id'] for b in budgets]
+    for b in budgets:
+        real_spent = spending.get(b['categoria_id'], 0.0)
+        impacto_presupuestos += max(b['monto'], real_spent)
+        
+    gastos_no_presupuestados = sum(v for k, v in spending.items() if k not in budget_cat_ids)
+    
+    resultado_proyectado = ingreso_total + ingresos_extra_total - gastos_fijos_total - impacto_presupuestos - gastos_no_presupuestados
     
     return {
         "ingreso_total": ingreso_total,
@@ -321,5 +334,5 @@ def get_month_summary(month: str) -> dict:
         "ingresos_extra": ingresos_extra_total,
         "resultado_real": resultado_real,
         "resultado_proyectado": resultado_proyectado,
-        "resultado_real_details": None
+        "resultado_real_details": resultado_real_details
     }
