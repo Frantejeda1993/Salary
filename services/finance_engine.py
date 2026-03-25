@@ -1,10 +1,38 @@
 from datetime import datetime
+import streamlit as st
+from dateutil.relativedelta import relativedelta
 from utils.date_utils import is_active_in_month, get_current_month, parse_month
 from services.firestore_service import FirestoreService
 
 # Services for easy access
 def _get_service(collection_name):
     return FirestoreService(collection_name)
+
+
+def _get_previous_month(month: str) -> str:
+    return (parse_month(month) - relativedelta(months=1)).strftime("%Y-%m")
+
+
+def calculate_remaining_from_previous_month(month: str) -> float:
+    """Returns projected carry-over from the previous month."""
+    previous_month = _get_previous_month(month)
+    previous_summary = get_month_summary(previous_month, include_rollover=False)
+    return previous_summary.get("resultado_proyectado", 0.0)
+
+
+def run_month_rollover(month: str) -> float:
+    """Idempotent rollover routine per session/month.
+
+    Computes and stores previous month carry-over in session state so UI can
+    reuse it safely across reruns.
+    """
+    rollover_cache = st.session_state.setdefault("monthly_rollover", {})
+    if month in rollover_cache:
+        return rollover_cache[month]
+
+    remaining = calculate_remaining_from_previous_month(month)
+    rollover_cache[month] = remaining
+    return remaining
 
 def calculate_salary_net(salary_id: str, month: str) -> float:
     """Calculates the net salary for a given month considering active deductions and overtimes."""
@@ -77,7 +105,6 @@ def _get_account_historical_salary_incomes(account_id: str, up_to_month: str = N
         # Iterate months from start_date to min(target_date, end_date)
         # For simplicity, we can just check is_active_in_month for all months past
         # We need a proper way to iterate months.
-        from dateutil.relativedelta import relativedelta
         itr = start_date.replace(day=1)
         end_itr = target_date.replace(day=1)
         if end_date and end_date.replace(day=1) < end_itr:
@@ -246,7 +273,7 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
         ]
     return pending_loans
 
-def get_month_summary(month: str) -> dict:
+def get_month_summary(month: str, include_rollover: bool = True) -> dict:
     """Returns summary for month view."""
     # Ingreso total, Gastos fijos, Presupuestos, Gastos reales, Ingresos extra
     salaries = _get_service("salaries").get_all()
@@ -326,8 +353,11 @@ def get_month_summary(month: str) -> dict:
     
     resultado_proyectado = ingreso_total + ingresos_extra_total - gastos_fijos_total - impacto_presupuestos - gastos_no_presupuestados
     
+    remaining_from_previous_month = calculate_remaining_from_previous_month(month) if include_rollover else 0.0
+
     return {
         "ingreso_total": ingreso_total,
+        "remaining_from_previous_month": remaining_from_previous_month,
         "gastos_fijos": gastos_fijos_total,
         "presupuestos": presupuestos_total,
         "gastos_reales": gastos_reales,
