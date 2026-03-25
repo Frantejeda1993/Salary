@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending, get_fixed_expenses_for_month, run_month_rollover_if_needed
 from utils.date_utils import get_current_month, get_month_options
-from services.firestore_service import FirestoreService
+from services.firestore_service import FirestoreService, clear_firestore_read_caches
 from utils.money_utils import format_currency
 
 st.title("📅 Monthly View Breakdown")
@@ -20,10 +20,15 @@ if 'sel_month' not in st.session_state:
 selected_month = st.selectbox("Select Month", months, index=months.index(st.session_state['sel_month']) if st.session_state['sel_month'] in months else 0)
 st.session_state['sel_month'] = selected_month
 
+last_processed_month = st.session_state.get('monthly_view_last_processed_month')
+if last_processed_month != selected_month:
+    run_month_rollover_if_needed()
+    clear_firestore_read_caches()
+    st.session_state['monthly_view_last_processed_month'] = selected_month
+
 st.divider()
 st.subheader(f"Summary for {selected_month}")
 
-run_month_rollover_if_needed()
 summary = get_month_summary(selected_month)
 
 col1, col2, col3, col4 = st.columns(4)
@@ -33,6 +38,10 @@ col3.metric("Gastos Reales", format_currency(summary['gastos_reales']))
 col4.metric("Gastos Fijos", format_currency(summary['gastos_fijos']))
 
 st.metric("Total Presupuestado", format_currency(summary['presupuestos']))
+st.metric(
+    "Remaining from Previous Month",
+    format_currency(summary.get('remaining_from_previous_month', 0.0))
+)
 
 st.divider()
 rc1, rc2 = st.columns(2)
