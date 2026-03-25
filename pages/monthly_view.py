@@ -32,7 +32,6 @@ col3.metric("Gastos Reales", format_currency(summary['gastos_reales']))
 col4.metric("Gastos Fijos", format_currency(summary['gastos_fijos']))
 
 st.metric("Total Presupuestado", format_currency(summary['presupuestos']))
-st.metric("Remaining from previous month", format_currency(summary.get('remaining_from_previous_month', 0.0)))
 
 st.divider()
 rc1, rc2 = st.columns(2)
