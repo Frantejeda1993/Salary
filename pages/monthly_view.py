@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending, get_fixed_expenses_for_month
+from datetime import datetime
+from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending, get_fixed_expenses_for_month, run_month_rollover_if_needed
 from utils.date_utils import get_current_month, get_month_options
 from services.firestore_service import FirestoreService
 from utils.money_utils import format_currency
@@ -23,6 +24,7 @@ st.session_state['sel_month'] = selected_month
 st.divider()
 st.subheader(f"Summary for {selected_month}")
 
+run_month_rollover_if_needed(datetime.now().date())
 summary = get_month_summary(selected_month)
 
 col1, col2, col3, col4 = st.columns(4)
