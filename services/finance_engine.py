@@ -63,6 +63,49 @@ def resolve_main_account_for_month(month: str) -> Optional[dict]:
     return next((a for a in accounts if a.get("is_main", False)), None)
 
 
+def _get_previous_month(month: str) -> str:
+    return (parse_month(month) - relativedelta(months=1)).strftime("%Y-%m")
+
+
+def _get_snapshot_effective_result(snapshot: Optional[dict]) -> Optional[float]:
+    if not snapshot:
+        return None
+
+    status = snapshot.get("status")
+    if status == "closed":
+        return float(snapshot.get("resultado_real_closed", 0.0))
+    if status == "future_projection":
+        return float(snapshot.get("resultado_proyectado_frozen", 0.0))
+
+    return None
+
+
+def _ensure_future_projection_snapshot(month: str, account_id: str, resultado_proyectado: float) -> dict:
+    """
+    Creates/updates a future month snapshot for the selected main account.
+    remaining_from_previous_month is derived from a chain of snapshots when possible.
+    """
+    current_month = get_current_month()
+    previous_month = _get_previous_month(month)
+
+    previous_snapshot = get_monthly_account_snapshot(previous_month, account_id)
+    if previous_snapshot is None and previous_month > current_month:
+        # Build chain for future months that do not yet have snapshots.
+        _ensure_future_projection_snapshot(previous_month, account_id, 0.0)
+        previous_snapshot = get_monthly_account_snapshot(previous_month, account_id)
+
+    remaining_from_previous_month = _get_snapshot_effective_result(previous_snapshot)
+    if remaining_from_previous_month is None:
+        remaining_from_previous_month = float(previous_snapshot.get("remaining_from_previous_month", 0.0)) if previous_snapshot else 0.0
+
+    return upsert_monthly_account_snapshot(month, account_id, {
+        "is_main_account_for_month": True,
+        "remaining_from_previous_month": float(remaining_from_previous_month),
+        "resultado_proyectado_frozen": float(resultado_proyectado),
+        "status": "future_projection",
+    })
+
+
 def _calculate_main_account_result_for_month(account_id: str, month: str, remaining_from_previous_month: float = 0.0) -> float:
     """Calcula el resultado real de una cuenta principal para un mes."""
     salaries = _get_service("salaries").get_all()
@@ -399,6 +442,9 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
 
 def get_month_summary(month: str) -> dict:
     """Returns summary for month view."""
+    current_month = get_current_month()
+    is_future_month = month > current_month
+
     # Ingreso total, Gastos fijos, Presupuestos, Gastos reales, Ingresos extra
     salaries = _get_service("salaries").get_all()
     ingreso_total = sum(calculate_salary_net(s['id'], month) for s in salaries if is_active_in_month(
@@ -441,6 +487,14 @@ def get_month_summary(month: str) -> dict:
     if main_acc:
         main_id = main_acc['id']
         month_snapshot = main_acc.get("snapshot") or get_monthly_account_snapshot(month, main_id)
+        if month_snapshot and month == current_month and month_snapshot.get("status") == "future_projection":
+            month_snapshot = upsert_monthly_account_snapshot(month, main_id, {
+                "is_main_account_for_month": True,
+                "remaining_from_previous_month": float(month_snapshot.get("remaining_from_previous_month", 0.0)),
+                "resultado_real_closed": float(month_snapshot.get("resultado_real_closed", 0.0)),
+                "resultado_proyectado_frozen": float(month_snapshot.get("resultado_proyectado_frozen", 0.0)),
+                "status": "open",
+            })
         remaining_from_previous_month = float(month_snapshot.get("remaining_from_previous_month", 0.0)) if month_snapshot else 0.0
 
         main_salaries = sum(calculate_salary_net(s['id'], month) for s in salaries if s.get('account_id') == main_id and is_active_in_month(
@@ -483,6 +537,14 @@ def get_month_summary(month: str) -> dict:
     gastos_no_presupuestados = sum(v for k, v in spending.items() if k not in budget_cat_ids)
     
     resultado_proyectado = ingreso_total + ingresos_extra_total - gastos_fijos_total - impacto_presupuestos - gastos_no_presupuestados
+
+    if is_future_month and main_acc:
+        main_id = main_acc["id"]
+        future_snapshot = _ensure_future_projection_snapshot(month, main_id, resultado_proyectado)
+        remaining_from_previous_month = float(future_snapshot.get("remaining_from_previous_month", remaining_from_previous_month))
+        resultado_proyectado = float(future_snapshot.get("resultado_proyectado_frozen", resultado_proyectado))
+        if resultado_real_details:
+            resultado_real_details["snapshot_status"] = future_snapshot.get("status")
     
     return {
         "ingreso_total": ingreso_total,
