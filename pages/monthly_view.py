@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending, get_fixed_expenses_for_month
-from utils.date_utils import get_current_month, get_month_options
+from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending, get_fixed_expenses_for_month, calculate_future_month_projection
+from utils.date_utils import get_current_month, get_month_options, parse_month
 from services.firestore_service import FirestoreService
 from utils.money_utils import format_currency
 
@@ -35,9 +35,16 @@ st.metric("Total Presupuestado", format_currency(summary['presupuestos']))
 
 st.divider()
 rc1, rc2 = st.columns(2)
+current_month = get_current_month()
+is_future_month = parse_month(selected_month) > parse_month(current_month)
+is_current_month = selected_month == current_month
+
 with rc1:
     res_details = summary.get('resultado_real_details')
-    if res_details:
+    if is_future_month:
+        future_projection = calculate_future_month_projection(selected_month)
+        st.info(f"### Resultado Real (Proyección {selected_month})\n# {format_currency(future_projection['resultado_real'])}")
+    elif is_current_month and res_details:
         main_id = res_details['main_account_id']
         main_real = calculate_real_balance(main_id)
         st.info(f"### Resultado Real ({res_details['main_account_name']})\n# {format_currency(main_real)}")
@@ -51,8 +58,12 @@ with rc1:
                 st.markdown(f"<small style='color:#ff4b4b; font-weight:bold;'>- Pending Loan: {format_currency(pending_amount)} from {acc_origen_name} (since {loan_fecha})</small>", unsafe_allow_html=True)
     else:
         st.info(f"### Resultado Real\n# {format_currency(summary['resultado_real'])}")
+
 with rc2:
-    if res_details:
+    if is_future_month:
+        future_projection = calculate_future_month_projection(selected_month)
+        st.success(f"### Resultado Proyectado (Proyección {selected_month})\n# {format_currency(future_projection['resultado_proyectado'])}")
+    elif is_current_month and res_details:
         main_id = res_details['main_account_id']
         main_proj = calculate_projected_balance(main_id)
         st.success(f"### Resultado Proyectado ({res_details['main_account_name']})\n# {format_currency(main_proj)}")

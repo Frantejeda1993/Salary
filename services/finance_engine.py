@@ -232,6 +232,53 @@ def calculate_projected_balance(account_id: str) -> float:
             
     return real - fixed_pendientes - pending_budget_impact
 
+
+
+def calculate_future_month_projection(month: str, start_month: str = "2026-03") -> dict:
+    """Calcula una variante proyectada por cadena mensual para meses futuros.
+
+    Reglas:
+    - resultado_real(m) = ingreso_total_salaries(m) + resultado_proyectado(m-1)
+    - resultado_proyectado(m) = resultado_real(m) - presupuestos(m) - gastos_fijos(m)
+
+    Nota: antes de marzo 2026 no hay datos base para esta variante.
+    """
+    target_date = parse_month(month)
+    base_date = parse_month(start_month)
+
+    if target_date < base_date:
+        return {"resultado_real": 0.0, "resultado_proyectado": 0.0}
+
+    salaries = _get_service("salaries").get_all()
+
+    from dateutil.relativedelta import relativedelta
+    itr = base_date
+    previous_projected = 0.0
+    last_real = 0.0
+
+    while itr <= target_date:
+        current_month = itr.strftime("%Y-%m")
+
+        ingreso_total = sum(
+            calculate_salary_net(s['id'], current_month)
+            for s in salaries
+            if is_active_in_month(
+                s['fecha_inicio'].date() if isinstance(s['fecha_inicio'], datetime) else datetime.strptime(s['fecha_inicio'][:10], "%Y-%m-%d").date(),
+                s['fecha_fin'].date() if isinstance(s['fecha_fin'], datetime) else datetime.strptime(s['fecha_fin'][:10], "%Y-%m-%d").date() if s.get('fecha_fin') else None,
+                current_month
+            )
+        )
+
+        presupuestos_total = sum(b.get('monto', 0.0) for b in get_active_budgets(current_month))
+        gastos_fijos_total = sum(fe.get('monto', 0.0) for fe in get_fixed_expenses_for_month(current_month))
+
+        last_real = ingreso_total + previous_projected
+        previous_projected = last_real - presupuestos_total - gastos_fijos_total
+
+        itr += relativedelta(months=1)
+
+    return {"resultado_real": last_real, "resultado_proyectado": previous_projected}
+
 def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
     """Returns incoming pending loans for an account, optionally filtered by month."""
     transfers = _get_service("transfers").get_by_field("cuenta_destino", "==", account_id)
