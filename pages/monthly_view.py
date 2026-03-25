@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
-from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending, get_fixed_expenses_for_month
+from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending, get_fixed_expenses_for_month, run_month_rollover
 from utils.date_utils import get_current_month, get_month_options
-from services.firestore_service import FirestoreService
+from services.firestore_service import FirestoreService, clear_firestore_caches
 from utils.money_utils import format_currency
 
 st.title("📅 Monthly View Breakdown")
@@ -17,19 +17,39 @@ months = get_month_options()
 if 'sel_month' not in st.session_state:
     st.session_state['sel_month'] = get_current_month()
 
-selected_month = st.selectbox("Select Month", months, index=months.index(st.session_state['sel_month']) if st.session_state['sel_month'] in months else 0)
-st.session_state['sel_month'] = selected_month
+
+def _handle_month_change():
+    selected = st.session_state.get("sel_month_selector")
+    previous = st.session_state.get("sel_month")
+    if selected and selected != previous:
+        run_month_rollover(selected)
+        clear_firestore_caches()
+        st.session_state['sel_month'] = selected
+
+selected_month = st.selectbox(
+    "Select Month",
+    months,
+    index=months.index(st.session_state['sel_month']) if st.session_state['sel_month'] in months else 0,
+    key="sel_month_selector",
+    on_change=_handle_month_change
+)
+
+if st.session_state.get('sel_month') != selected_month:
+    st.session_state['sel_month'] = selected_month
+
+run_month_rollover(selected_month)
 
 st.divider()
 st.subheader(f"Summary for {selected_month}")
 
 summary = get_month_summary(selected_month)
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Ingreso Total (Salaries)", format_currency(summary['ingreso_total']))
 col2.metric("Ingresos Extra", format_currency(summary['ingresos_extra']))
 col3.metric("Gastos Reales", format_currency(summary['gastos_reales']))
 col4.metric("Gastos Fijos", format_currency(summary['gastos_fijos']))
+col5.metric("Remaining Prev. Month", format_currency(summary.get('remaining_from_previous_month', 0.0)))
 
 st.metric("Total Presupuestado", format_currency(summary['presupuestos']))
 

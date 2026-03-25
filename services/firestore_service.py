@@ -41,6 +41,11 @@ def _clear_firestore_caches():
     _cached_get_by_field.clear()
     _cached_get_by_id.clear()
 
+
+def clear_firestore_caches():
+    """Public safe cache invalidation entrypoint for Firestore reads."""
+    _clear_firestore_caches()
+
 class FirestoreService:
     def __init__(self, collection_name: str):
         self.collection_name = collection_name
