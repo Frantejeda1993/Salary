@@ -2,9 +2,18 @@ from datetime import datetime
 from utils.date_utils import is_active_in_month, get_current_month, parse_month
 from services.firestore_service import FirestoreService
 
+APP_START_MONTH = "2026-03"
+
 # Services for easy access
 def _get_service(collection_name):
     return FirestoreService(collection_name)
+
+def _get_previous_month(month: str) -> str:
+    from dateutil.relativedelta import relativedelta
+    return (parse_month(month) - relativedelta(months=1)).strftime("%Y-%m")
+
+def _is_before_app_start(month: str) -> bool:
+    return parse_month(month) < parse_month(APP_START_MONTH)
 
 def calculate_salary_net(salary_id: str, month: str) -> float:
     """Calculates the net salary for a given month considering active deductions and overtimes."""
@@ -248,6 +257,19 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
 
 def get_month_summary(month: str) -> dict:
     """Returns summary for month view."""
+    if _is_before_app_start(month):
+        return {
+            "ingreso_total": 0.0,
+            "gastos_fijos": 0.0,
+            "presupuestos": 0.0,
+            "gastos_reales": 0.0,
+            "ingresos_extra": 0.0,
+            "resultado_real": 0.0,
+            "resultado_proyectado": 0.0,
+            "resultado_real_details": None,
+            "remaining_from_previous_month": 0.0
+        }
+
     # Ingreso total, Gastos fijos, Presupuestos, Gastos reales, Ingresos extra
     salaries = _get_service("salaries").get_all()
     ingreso_total = sum(calculate_salary_net(s['id'], month) for s in salaries if is_active_in_month(
@@ -313,6 +335,26 @@ def get_month_summary(month: str) -> dict:
         }
     else:
         resultado_real = ingreso_total + ingresos_extra_total - gastos_reales - fixed_paid
+
+    # Carry-over logic:
+    # - Current month: use previous month's real result
+    # - Future months: use previous month's projected result
+    # - Past months: do not apply carry-over
+    current_month = get_current_month()
+    month_date = parse_month(month)
+    current_month_date = parse_month(current_month)
+    remaining_from_previous_month = 0.0
+    previous_month = _get_previous_month(month)
+
+    if not _is_before_app_start(previous_month):
+        if month_date == current_month_date:
+            previous_summary = get_month_summary(previous_month)
+            remaining_from_previous_month = previous_summary.get('resultado_real', 0.0)
+        elif month_date > current_month_date:
+            previous_summary = get_month_summary(previous_month)
+            remaining_from_previous_month = previous_summary.get('resultado_proyectado', 0.0)
+
+    resultado_real += remaining_from_previous_month
     
     # Projected Result for the month = Ingreso_Total + Ingresos_Extra - Gastos fijos - max(Presupuestos, Gastos_Reales for budget categories) - Unbudgeted Gastos
     spending = calculate_category_spending(month)
@@ -334,5 +376,6 @@ def get_month_summary(month: str) -> dict:
         "ingresos_extra": ingresos_extra_total,
         "resultado_real": resultado_real,
         "resultado_proyectado": resultado_proyectado,
-        "resultado_real_details": resultado_real_details
+        "resultado_real_details": resultado_real_details,
+        "remaining_from_previous_month": remaining_from_previous_month
     }
