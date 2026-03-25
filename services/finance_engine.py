@@ -1,10 +1,136 @@
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 from utils.date_utils import is_active_in_month, get_current_month, parse_month
 from services.firestore_service import FirestoreService
 
 # Services for easy access
 def _get_service(collection_name):
     return FirestoreService(collection_name)
+
+MONTH_ROLLOVER_START = "2026-03"
+
+def _calculate_month_resultado_real_for_main_account(month: str) -> tuple:
+    """Returns (resultado_real, main_account_dict_or_none) for a specific month."""
+    acc_srv = _get_service("accounts")
+    accounts = acc_srv.get_all()
+    main_acc = next((a for a in accounts if a.get('is_main', False)), None)
+
+    if not main_acc:
+        return 0.0, None
+
+    main_id = main_acc['id']
+    salaries = _get_service("salaries").get_by_field("account_id", "==", main_id)
+    expenses = _get_service("expenses").get_by_field("account_id", "==", main_id)
+    incomes = _get_service("incomes").get_by_field("account_id", "==", main_id)
+    fixed_all = get_fixed_expenses_for_month(month)
+
+    main_salaries = sum(
+        calculate_salary_net(s['id'], month)
+        for s in salaries
+        if is_active_in_month(
+            s['fecha_inicio'].date() if isinstance(s['fecha_inicio'], datetime) else datetime.strptime(s['fecha_inicio'][:10], "%Y-%m-%d").date(),
+            s['fecha_fin'].date() if isinstance(s['fecha_fin'], datetime) else datetime.strptime(s['fecha_fin'][:10], "%Y-%m-%d").date() if s.get('fecha_fin') else None,
+            month
+        )
+    )
+    main_fixed = sum(
+        (fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto'])
+        for fe in fixed_all
+        if fe.get('account_id') == main_id and fe['estado'] == 'pagado'
+    )
+    main_expenses = sum(
+        e['monto']
+        for e in expenses
+        if (e['fecha'].date() if isinstance(e['fecha'], datetime) else datetime.strptime(e['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+    )
+    main_base_incomes = sum(
+        i['monto']
+        for i in incomes
+        if (i['fecha'].date() if isinstance(i['fecha'], datetime) else datetime.strptime(i['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+    )
+    main_loans_total = sum(
+        l.get('outstanding_amount', l.get('monto', 0.0))
+        for l in get_pending_loans_for_account(main_id, month)
+    )
+
+    return main_salaries + main_base_incomes + main_loans_total - main_expenses - main_fixed, main_acc
+
+def _get_month_rollover_doc(month: str) -> dict:
+    docs = _get_service("month_rollovers").get_by_field("month", "==", month)
+    return docs[0] if docs else None
+
+def _upsert_month_rollover_doc(month: str, data: dict) -> dict:
+    rollover_srv = _get_service("month_rollovers")
+    existing = _get_month_rollover_doc(month)
+    payload = dict(data)
+    payload["month"] = month
+    if existing:
+        rollover_srv.update(existing["id"], payload)
+        return {**existing, **payload}
+    doc_id = rollover_srv.add(payload)
+    return {"id": doc_id, **payload}
+
+def run_month_rollover_if_needed(today=None) -> dict:
+    """Idempotently closes previous month and opens current month from 2026-03 onwards."""
+    if today is None:
+        today_date = datetime.now().date()
+    elif isinstance(today, datetime):
+        today_date = today.date()
+    else:
+        today_date = today
+
+    current_month = today_date.strftime("%Y-%m")
+    previous_month = (today_date.replace(day=1) - relativedelta(months=1)).strftime("%Y-%m")
+
+    if current_month < MONTH_ROLLOVER_START:
+        return {"status": "ignored", "current_month": current_month, "previous_month": previous_month}
+
+    previous_closed_value = 0.0
+    main_acc = None
+    previous_doc = None
+
+    if previous_month >= MONTH_ROLLOVER_START:
+        previous_doc = _get_month_rollover_doc(previous_month)
+        if previous_doc and previous_doc.get("resultado_real_closed") is not None:
+            previous_closed_value = previous_doc.get("resultado_real_closed", 0.0)
+            main_acc = {
+                "id": previous_doc.get("main_account_id"),
+                "nombre": previous_doc.get("main_account_name")
+            } if previous_doc.get("main_account_id") else None
+        else:
+            previous_closed_value, main_acc = _calculate_month_resultado_real_for_main_account(previous_month)
+
+    previous_updates = {}
+    if previous_month >= MONTH_ROLLOVER_START:
+        if not previous_doc or previous_doc.get("resultado_real_closed") is None:
+            previous_updates["resultado_real_closed"] = previous_closed_value
+            previous_updates["closed_at"] = datetime.now()
+        if main_acc:
+            if not previous_doc or not previous_doc.get("main_account_id"):
+                previous_updates["main_account_id"] = main_acc.get("id")
+            if not previous_doc or not previous_doc.get("main_account_name"):
+                previous_updates["main_account_name"] = main_acc.get("nombre")
+        if previous_updates:
+            _upsert_month_rollover_doc(previous_month, previous_updates)
+
+    current_doc = _get_month_rollover_doc(current_month)
+    current_updates = {}
+    if not current_doc or current_doc.get("remaining_from_previous_month") is None:
+        current_updates["remaining_from_previous_month"] = previous_closed_value
+    if not current_doc or not current_doc.get("rollover_source_month"):
+        current_updates["rollover_source_month"] = previous_month
+    if main_acc:
+        if not current_doc or not current_doc.get("main_account_id"):
+            current_updates["main_account_id"] = main_acc.get("id")
+        if not current_doc or not current_doc.get("main_account_name"):
+            current_updates["main_account_name"] = main_acc.get("nombre")
+    if not current_doc or not current_doc.get("opened_at"):
+        current_updates["opened_at"] = datetime.now()
+
+    if current_updates:
+        _upsert_month_rollover_doc(current_month, current_updates)
+
+    return {"status": "ok", "current_month": current_month, "previous_month": previous_month}
 
 def calculate_salary_net(salary_id: str, month: str) -> float:
     """Calculates the net salary for a given month considering active deductions and overtimes."""
