@@ -1,10 +1,65 @@
 from datetime import datetime
+from typing import Optional
 from utils.date_utils import is_active_in_month, get_current_month, parse_month
 from services.firestore_service import FirestoreService
 
 # Services for easy access
 def _get_service(collection_name):
     return FirestoreService(collection_name)
+
+
+def _get_monthly_snapshot_service():
+    return _get_service("monthly_account_snapshots")
+
+
+def get_monthly_account_snapshot(month: str, account_id: str) -> Optional[dict]:
+    """Returns the monthly snapshot for (month, account_id), if present."""
+    snapshot_srv = _get_monthly_snapshot_service()
+    snapshots = snapshot_srv.get_by_field("month", "==", month)
+    return next((s for s in snapshots if s.get("account_id") == account_id), None)
+
+
+def upsert_monthly_account_snapshot(month: str, account_id: str, data: dict) -> dict:
+    """Creates or updates snapshot identified by logical key (month, account_id)."""
+    snapshot_srv = _get_monthly_snapshot_service()
+    now = datetime.utcnow()
+
+    payload = {
+        "month": month,
+        "account_id": account_id,
+        "is_main_account_for_month": bool(data.get("is_main_account_for_month", False)),
+        "resultado_real_closed": float(data.get("resultado_real_closed", 0.0)),
+        "remaining_from_previous_month": float(data.get("remaining_from_previous_month", 0.0)),
+        "status": data.get("status", "open"),
+        "updated_at": now,
+    }
+    if "resultado_proyectado_frozen" in data and data.get("resultado_proyectado_frozen") is not None:
+        payload["resultado_proyectado_frozen"] = float(data["resultado_proyectado_frozen"])
+
+    existing = get_monthly_account_snapshot(month, account_id)
+    if existing:
+        snapshot_srv.update(existing["id"], payload)
+        return snapshot_srv.get_by_id(existing["id"])
+
+    payload["created_at"] = now
+    doc_id = snapshot_srv.add(payload)
+    return snapshot_srv.get_by_id(doc_id)
+
+
+def resolve_main_account_for_month(month: str) -> Optional[dict]:
+    """Resolves the main account for a month using snapshot state first."""
+    snapshot_srv = _get_monthly_snapshot_service()
+    month_snapshots = snapshot_srv.get_by_field("month", "==", month)
+    main_snapshot = next((s for s in month_snapshots if s.get("is_main_account_for_month", False)), None)
+
+    if main_snapshot and main_snapshot.get("account_id"):
+        account = _get_service("accounts").get_by_id(main_snapshot["account_id"])
+        if account:
+            account["snapshot"] = main_snapshot
+            return account
+
+    accounts = _get_service("accounts").get_all()
+    return next((a for a in accounts if a.get("is_main", False)), None)
 
 def calculate_salary_net(salary_id: str, month: str) -> float:
     """Calculates the net salary for a given month considering active deductions and overtimes."""
@@ -282,14 +337,16 @@ def get_month_summary(month: str) -> dict:
     # Calculate Results
     fixed_paid = sum((fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto']) for fe in fixed_all if fe['estado'] == 'pagado')
     
-    # Identify Main Account for "Resultado Real"
-    acc_srv = _get_service("accounts")
-    accounts = acc_srv.get_all()
-    main_acc = next((a for a in accounts if a.get('is_main', False)), None)
+    # Identify Main Account for "Resultado Real" using monthly snapshot if present
+    main_acc = resolve_main_account_for_month(month)
     
     resultado_real_details = None
+    remaining_from_previous_month = 0.0
     if main_acc:
         main_id = main_acc['id']
+        month_snapshot = main_acc.get("snapshot") or get_monthly_account_snapshot(month, main_id)
+        remaining_from_previous_month = float(month_snapshot.get("remaining_from_previous_month", 0.0)) if month_snapshot else 0.0
+
         main_salaries = sum(calculate_salary_net(s['id'], month) for s in salaries if s.get('account_id') == main_id and is_active_in_month(
             s['fecha_inicio'].date() if isinstance(s['fecha_inicio'], datetime) else datetime.strptime(s['fecha_inicio'][:10], "%Y-%m-%d").date(),
             s['fecha_fin'].date() if isinstance(s['fecha_fin'], datetime) else datetime.strptime(s['fecha_fin'][:10], "%Y-%m-%d").date() if s.get('fecha_fin') else None,
@@ -305,11 +362,16 @@ def get_month_summary(month: str) -> dict:
         
         main_extra_incomes = main_base_incomes + main_loans_total
         
-        resultado_real = main_salaries + main_extra_incomes - main_expenses - main_fixed
+        if month_snapshot and month_snapshot.get("status") == "closed":
+            resultado_real = float(month_snapshot.get("resultado_real_closed", 0.0))
+        else:
+            resultado_real = remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed
+
         resultado_real_details = {
             "main_account_id": main_id,
             "main_account_name": main_acc.get('nombre', 'Main'),
-            "pending_loans": get_pending_loans_for_account(main_id) # all pending loans for the main account, regardless of month
+            "pending_loans": get_pending_loans_for_account(main_id), # all pending loans for the main account, regardless of month
+            "snapshot_status": month_snapshot.get("status") if month_snapshot else None
         }
     else:
         resultado_real = ingreso_total + ingresos_extra_total - gastos_reales - fixed_paid
@@ -332,6 +394,7 @@ def get_month_summary(month: str) -> dict:
         "presupuestos": presupuestos_total,
         "gastos_reales": gastos_reales,
         "ingresos_extra": ingresos_extra_total,
+        "remaining_from_previous_month": remaining_from_previous_month,
         "resultado_real": resultado_real,
         "resultado_proyectado": resultado_proyectado,
         "resultado_real_details": resultado_real_details
