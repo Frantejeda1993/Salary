@@ -1,10 +1,69 @@
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 from utils.date_utils import is_active_in_month, get_current_month, parse_month
 from services.firestore_service import FirestoreService
 
 # Services for easy access
 def _get_service(collection_name):
     return FirestoreService(collection_name)
+
+MONTH_SNAPSHOTS_COLLECTION = "month_snapshots"
+
+
+def _resolve_main_account() -> dict:
+    """Returns the current main account, if any."""
+    accounts = _get_service("accounts").get_all()
+    return next((a for a in accounts if a.get('is_main', False)), None)
+
+
+def _get_previous_month(month: str) -> str:
+    month_date = parse_month(month)
+    return (month_date - relativedelta(months=1)).strftime("%Y-%m")
+
+
+def _get_snapshot_by_month(month: str) -> dict:
+    snapshots = _get_service(MONTH_SNAPSHOTS_COLLECTION).get_by_field("month", "==", month)
+    return snapshots[0] if snapshots else None
+
+
+def _calculate_remaining_from_previous_month(month: str) -> float:
+    """Computes carry-over for the given month from previous snapshots chain."""
+    previous_month = _get_previous_month(month)
+    previous_snapshot = _get_snapshot_by_month(previous_month)
+    if not previous_snapshot:
+        return 0.0
+
+    previous_remaining = float(previous_snapshot.get("remaining_from_previous_month", 0.0) or 0.0)
+    previous_frozen = float(previous_snapshot.get("resultado_proyectado_frozen", 0.0) or 0.0)
+    return previous_remaining + previous_frozen
+
+
+def _upsert_month_snapshot(month: str, account_id: str, resultado_proyectado: float):
+    snapshot_service = _get_service(MONTH_SNAPSHOTS_COLLECTION)
+    snapshot_data = {
+        "month": month,
+        "status": "future_projection",
+        "account_id": account_id,
+        "resultado_proyectado_frozen": resultado_proyectado,
+        "remaining_from_previous_month": _calculate_remaining_from_previous_month(month),
+    }
+
+    existing = _get_snapshot_by_month(month)
+    if existing:
+        snapshot_service.update(existing["id"], snapshot_data)
+    else:
+        snapshot_service.add(snapshot_data)
+
+
+def _transition_snapshot_to_open_if_current_month(month: str):
+    """When a projected month becomes current month, transition it to open."""
+    current_month = get_current_month()
+    if month != current_month:
+        return
+
+    current_snapshot = _get_snapshot_by_month(month)
+    if current_snapshot and current_snapshot.get("status") == "future_projection":
+        _get_service(MONTH_SNAPSHOTS_COLLECTION).update(current_snapshot["id"], {"status": "open"})
 
 def calculate_salary_net(salary_id: str, month: str) -> float:
     """Calculates the net salary for a given month considering active deductions and overtimes."""
@@ -77,7 +136,6 @@ def _get_account_historical_salary_incomes(account_id: str, up_to_month: str = N
         # Iterate months from start_date to min(target_date, end_date)
         # For simplicity, we can just check is_active_in_month for all months past
         # We need a proper way to iterate months.
-        from dateutil.relativedelta import relativedelta
         itr = start_date.replace(day=1)
         end_itr = target_date.replace(day=1)
         if end_date and end_date.replace(day=1) < end_itr:
@@ -248,6 +306,13 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
 
 def get_month_summary(month: str) -> dict:
     """Returns summary for month view."""
+    current_month = get_current_month()
+    target_month_date = parse_month(month)
+    current_month_date = parse_month(current_month)
+
+    # If this projected month is now current, move snapshot to open and continue normal flow.
+    _transition_snapshot_to_open_if_current_month(month)
+
     # Ingreso total, Gastos fijos, Presupuestos, Gastos reales, Ingresos extra
     salaries = _get_service("salaries").get_all()
     ingreso_total = sum(calculate_salary_net(s['id'], month) for s in salaries if is_active_in_month(
@@ -283,9 +348,7 @@ def get_month_summary(month: str) -> dict:
     fixed_paid = sum((fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto']) for fe in fixed_all if fe['estado'] == 'pagado')
     
     # Identify Main Account for "Resultado Real"
-    acc_srv = _get_service("accounts")
-    accounts = acc_srv.get_all()
-    main_acc = next((a for a in accounts if a.get('is_main', False)), None)
+    main_acc = _resolve_main_account()
     
     resultado_real_details = None
     if main_acc:
@@ -325,6 +388,10 @@ def get_month_summary(month: str) -> dict:
     gastos_no_presupuestados = sum(v for k, v in spending.items() if k not in budget_cat_ids)
     
     resultado_proyectado = ingreso_total + ingresos_extra_total - gastos_fijos_total - impacto_presupuestos - gastos_no_presupuestados
+
+    # For future months, freeze projection snapshot with current main account.
+    if target_month_date > current_month_date and main_acc:
+        _upsert_month_snapshot(month, main_acc["id"], resultado_proyectado)
     
     return {
         "ingreso_total": ingreso_total,
