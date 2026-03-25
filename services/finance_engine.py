@@ -91,16 +91,16 @@ def _get_account_historical_salary_incomes(account_id: str, up_to_month: str = N
             
     return total
 
-def calculate_real_balance(account_id: str) -> float:
+def calculate_real_balance(account_id: str, month: str | None = None) -> float:
     """Calculated as: saldo_inicial + sueldos netos_pasados + ingresos_extra - gastos - transferencias_salientes + transferencias_entrantes"""
     account = _get_service("accounts").get_by_id(account_id)
     if not account: return 0.0
     
     balance = account.get('saldo_inicial', 0.0)
-    current_m = get_current_month()
+    target_month = month or get_current_month()
     
     # Add all past and current month salaries
-    balance += _get_account_historical_salary_incomes(account_id, current_m)
+    balance += _get_account_historical_salary_incomes(account_id, target_month)
     
     # Extra incomes
     incomes = _get_service("incomes").get_by_field("account_id", "==", account_id)
@@ -201,23 +201,23 @@ def calculate_category_spending(month: str, account_id: str = None) -> dict:
                 
     return spending
 
-def calculate_projected_balance(account_id: str) -> float:
-    """Calcula el saldo proyectado del mes actual.
+def calculate_projected_balance(account_id: str, month: str | None = None) -> float:
+    """Calcula el saldo proyectado para el mes indicado (o mes actual por defecto).
 
     El saldo real ya incluye los gastos reales registrados. Por eso aquí solo se resta:
-    - gastos fijos impagados del mes actual, y
+    - gastos fijos impagados del mes objetivo, y
     - la parte pendiente de cada presupuesto activo (presupuesto - gasto_real, si es positiva).
     """
-    real = calculate_real_balance(account_id)
-    current_m = get_current_month()
+    target_month = month or get_current_month()
+    real = calculate_real_balance(account_id, target_month)
     
-    # Gastos fijos pendientes for current month
-    fixed_this_month = get_fixed_expenses_for_month(current_m)
+    # Gastos fijos pendientes for target month
+    fixed_this_month = get_fixed_expenses_for_month(target_month)
     fixed_pendientes = sum(fe['monto'] for fe in fixed_this_month if fe['account_id'] == account_id and fe['estado'] == 'impagado')
     
     # Presupuestos
-    active_budgets = get_active_budgets(current_m)
-    spending = calculate_category_spending(current_m, account_id)
+    active_budgets = get_active_budgets(target_month)
+    spending = calculate_category_spending(target_month, account_id)
     
     # Solo resta la parte de presupuesto que aún no se ha ejecutado en gasto real.
     pending_budget_impact = 0.0
