@@ -24,10 +24,21 @@ def build_account_options(account_items):
         {
             "label": f"{a.get('nombre', 'Unknown Account')} · {str(a.get('id', ''))[:6]}",
             "id": a.get('id'),
-            "bank_id": a.get('bank_id')
+            "bank_id": a.get('bank_id'),
+            "nombre": a.get('nombre', ''),
+            "is_main": a.get('is_main', False)
         }
         for a in account_items
     ]
+
+def parse_amount_input(raw_value):
+    cleaned = (raw_value or "").strip().replace(",", ".")
+    if not cleaned:
+        return 0.0
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
 
 
 def build_category_options(category_items):
@@ -44,6 +55,7 @@ if not accounts:
 else:
     acc_options = build_account_options(accounts)
     cat_options = build_category_options(categories)
+    main_acc_index = next((i for i, a in enumerate(acc_options) if a.get("is_main") or a.get("nombre") == "Main"), 0)
     
     tab1, tab2, tab3, tab4 = st.tabs(["Add Expense", "Add Extra Income", "Add Fuel Expense", "Add Loan"])
     acc_labels = [a['label'] for a in acc_options]
@@ -55,16 +67,21 @@ else:
             col1, col2 = st.columns(2)
             with col1:
                 nombre = st.text_input("Concept / Name")
-                monto = st.number_input("Amount", min_value=0.0, step=10.0)
-                account_label = st.selectbox("Account from", acc_labels)
+                monto_raw = st.text_input("Amount", value="", placeholder="0", key="amount_expense")
+                monto = parse_amount_input(monto_raw)
+                account_label = st.selectbox("Account from", acc_labels, index=main_acc_index)
                 selected_acc = next((a for a in acc_options if a['label'] == account_label), None)
             with col2:
                 fecha = st.date_input("Date", value=date.today(), format="DD/MM/YYYY")
                 categoria_label = st.selectbox("Category", cat_labels if cat_labels else ["None"])
                 selected_cat = next((c for c in cat_options if c['label'] == categoria_label), None)
                 
-            if st.form_submit_button("Save Expense") and nombre and monto > 0:
-                if not selected_acc:
+            if st.form_submit_button("Save Expense"):
+                if monto is None:
+                    st.error("Please enter a valid amount.")
+                elif not nombre or monto <= 0:
+                    st.error("Please complete name and amount greater than zero.")
+                elif not selected_acc:
                     st.error("Please select a valid account.")
                 else:
                     new_exp = Expense(
@@ -82,16 +99,21 @@ else:
             col1, col2 = st.columns(2)
             with col1:
                 nombre_inc = st.text_input("Concept / Name (Income)")
-                monto_inc = st.number_input("Amount (Income)", min_value=0.0, step=10.0)
-                account_inc_label = st.selectbox("Account to", acc_labels, key="acc_inc")
+                monto_inc_raw = st.text_input("Amount (Income)", value="", placeholder="0", key="amount_income")
+                monto_inc = parse_amount_input(monto_inc_raw)
+                account_inc_label = st.selectbox("Account to", acc_labels, key="acc_inc", index=main_acc_index)
                 selected_acc_inc = next((a for a in acc_options if a['label'] == account_inc_label), None)
             with col2:
                 fecha_inc = st.date_input("Date (Income)", value=date.today(), key="dt_inc", format="DD/MM/YYYY")
                 cat_options_with_none = ["None"] + cat_labels
                 categoria_inc = st.selectbox("Category (Optional)", cat_options_with_none, help="If related to a category, it reduces the spent amount.")
                 
-            if st.form_submit_button("Save Income") and nombre_inc and monto_inc > 0:
-                if not selected_acc_inc:
+            if st.form_submit_button("Save Income"):
+                if monto_inc is None:
+                    st.error("Please enter a valid amount.")
+                elif not nombre_inc or monto_inc <= 0:
+                    st.error("Please complete name and amount greater than zero.")
+                elif not selected_acc_inc:
                     st.error("Please select a valid account.")
                 else:
                     cat_selected = next((c for c in cat_options if c['label'] == categoria_inc), None)
@@ -111,23 +133,28 @@ else:
             col1, col2 = st.columns(2)
             with col1:
                 nombre_fuel = st.text_input("Concept / Name", value="Fuel")
-                monto_fuel = st.number_input("Total Amount Paid", min_value=0.0, step=10.0, key="mf")
+                monto_fuel_raw = st.text_input("Total Amount Paid", value="", placeholder="0", key="mf")
+                monto_fuel = parse_amount_input(monto_fuel_raw)
                 km_done = st.number_input("Km Done", min_value=0.0, step=10.0)
                 price_per_l = st.number_input("Price per L", min_value=0.0, step=0.1, format="%.3f")
             with col2:
                 fecha_fuel = st.date_input("Date", value=date.today(), format="DD/MM/YYYY", key="df")
-                account_fuel_label = st.selectbox("Account from", acc_labels, key="af")
+                account_fuel_label = st.selectbox("Account from", acc_labels, key="af", index=main_acc_index)
                 selected_acc_fuel = next((a for a in acc_options if a['label'] == account_fuel_label), None)
                 categoria_fuel_label = st.selectbox("Category", cat_labels if cat_labels else ["None"], key="cf")
                 selected_cat_fuel = next((c for c in cat_options if c['label'] == categoria_fuel_label), None)
 
-            if monto_fuel > 0 and km_done > 0 and price_per_l > 0:
+            if monto_fuel and monto_fuel > 0 and km_done > 0 and price_per_l > 0:
                 cost_per_1km = monto_fuel / km_done
                 cost_per_100km = cost_per_1km * 100
                 st.info(f"💡 **Calculations**:\n- Cost per 1 km: {format_currency(cost_per_1km)}\n- Cost per 100 km: {format_currency(cost_per_100km)}")
 
-            if st.form_submit_button("Save Fuel Expense") and nombre_fuel and monto_fuel > 0:
-                if not selected_acc_fuel:
+            if st.form_submit_button("Save Fuel Expense"):
+                if monto_fuel is None:
+                    st.error("Please enter a valid amount.")
+                elif not nombre_fuel or monto_fuel <= 0:
+                    st.error("Please complete name and amount greater than zero.")
+                elif not selected_acc_fuel:
                     st.error("Please select a valid account.")
                 else:
                     new_fuel_exp = FuelExpense(
@@ -451,4 +478,3 @@ if pending_loans:
                 st.rerun()
 else:
     st.info("No pending loans.")
-

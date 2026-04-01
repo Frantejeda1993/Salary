@@ -14,26 +14,43 @@ accounts = acc_srv.get_all()
 
 def build_account_options(account_items):
     return [
-        {"label": f"{a.get('nombre', 'Unknown Account')} · {str(a.get('id', ''))[:6]}", "id": a.get('id')}
+        {
+            "label": f"{a.get('nombre', 'Unknown Account')} · {str(a.get('id', ''))[:6]}",
+            "id": a.get('id'),
+            "nombre": a.get('nombre', ''),
+            "is_main": a.get('is_main', False)
+        }
         for a in account_items
     ]
+
+def parse_amount_input(raw_value):
+    cleaned = (raw_value or "").strip().replace(",", ".")
+    if not cleaned:
+        return 0.0
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
 
 if len(accounts) < 2:
     st.warning("You need at least two Accounts to make a transfer.")
 else:
     acc_options = build_account_options(accounts)
     acc_labels = [a['label'] for a in acc_options]
+    main_acc_index = next((i for i, a in enumerate(acc_options) if a.get("is_main") or a.get("nombre") == "Main"), 0)
+    default_destino_index = next((i for i, a in enumerate(acc_options) if i != main_acc_index), 0)
     
     with st.form("transfer_form", clear_on_submit=True):
         st.subheader("New Transfer")
         col1, col2 = st.columns(2)
         with col1:
             fecha = st.date_input("Date", value=date.today(), format="DD/MM/YYYY")
-            origen_label = st.selectbox("From Account", acc_labels, index=0)
+            origen_label = st.selectbox("From Account", acc_labels, index=main_acc_index)
             origen = next((a for a in acc_options if a['label'] == origen_label), None)
         with col2:
-            monto = st.number_input("Amount", min_value=0.0, step=100.0)
-            destino_label = st.selectbox("To Account", acc_labels, index=1)
+            monto_raw = st.text_input("Amount", value="", placeholder="0")
+            monto = parse_amount_input(monto_raw)
+            destino_label = st.selectbox("To Account", acc_labels, index=default_destino_index)
             destino = next((a for a in acc_options if a['label'] == destino_label), None)
             
         submitted = st.form_submit_button("Execute Transfer")
@@ -43,6 +60,8 @@ else:
                 st.error("Please select valid accounts.")
             elif origen['id'] == destino['id']:
                 st.error("Origin and Destination accounts must be different.")
+            elif monto is None:
+                st.error("Please enter a valid amount.")
             elif monto <= 0:
                 st.error("Amount must be greater than zero.")
             else:
