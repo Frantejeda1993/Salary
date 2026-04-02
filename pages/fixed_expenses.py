@@ -3,7 +3,7 @@ from datetime import date, datetime
 from services.firestore_service import FirestoreService
 from services.finance_engine import get_fixed_expenses_for_month
 from utils.date_utils import get_current_month, format_month, get_month_options
-from models.fixed_expense import FixedExpense, FixedExpenseInstance
+from models.fixed_expense import FixedExpense
 from utils.money_utils import format_currency
 
 st.title("📆 Fixed Expenses Management")
@@ -136,13 +136,12 @@ if active_fes:
                     update_data["monto"] = None
                 fei_srv.update(inst_id, update_data)
             else:
-                new_inst = FixedExpenseInstance(
-                    fixed_expense_id=fe['id'],
-                    mes=selected_month,
-                    estado=new_estado,
-                    monto=float(paid_amount) if new_estado == "pagado" else None
-                )
-                fei_srv.add(new_inst.to_dict())
+                fei_srv.add({
+                    "fixed_expense_id": fe['id'],
+                    "mes": selected_month,
+                    "estado": new_estado,
+                    "monto": float(paid_amount) if new_estado == "pagado" else None,
+                })
 
             st.rerun()
 else:
