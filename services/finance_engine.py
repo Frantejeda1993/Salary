@@ -395,61 +395,6 @@ def calculate_category_spending(month: str, account_id: str = None) -> dict:
                 
     return spending
 
-def _get_projected_budget_details(account_id: str, month: str) -> tuple[list[dict], float]:
-    """Build per-budget availability details and projected result for an account/month."""
-    real = calculate_real_balance(account_id, month)
-    fixed_this_month = get_fixed_expenses_for_month(month)
-    fixed_pendientes = sum(
-        fe['monto'] for fe in fixed_this_month
-        if fe['account_id'] == account_id and fe['estado'] == 'impagado'
-    )
-
-    active_budgets = get_active_budgets(month)
-    spending = calculate_category_spending(month, account_id)
-
-    budget_details = []
-    pending_budget_impact = 0.0
-    for b in active_budgets:
-        if b['account_id'] != account_id:
-            continue
-
-        cat_id = b['categoria_id']
-        presupuesto = b['monto']
-        real_spent = spending.get(cat_id, 0.0)
-        available = presupuesto - real_spent
-
-        budget_details.append({
-            "budget_id": b["id"],
-            "categoria_id": cat_id,
-            "presupuesto": presupuesto,
-            "real_spent": real_spent,
-            "available": available,
-        })
-
-        if real_spent < presupuesto:
-            pending_budget_impact += available
-
-    resultado = real - fixed_pendientes - pending_budget_impact
-
-    if resultado < 0:
-        budgets_with_available = [bd for bd in budget_details if bd["available"] > 0]
-        if budgets_with_available:
-            deficit = abs(resultado)
-            total_available = sum(bd["available"] for bd in budgets_with_available)
-
-            if total_available >= deficit:
-                for bd in budgets_with_available:
-                    proportion = bd["available"] / total_available if total_available > 0 else 0
-                    bd["available"] -= deficit * proportion
-                resultado = 0.0
-            else:
-                for bd in budgets_with_available:
-                    proportion = bd["available"] / total_available if total_available > 0 else 0
-                    bd["available"] -= total_available * proportion
-                resultado = -(deficit - total_available)
-
-    return budget_details, resultado
-
 def calculate_projected_balance(account_id: str, month: str | None = None) -> float:
     """Calcula el saldo proyectado para el mes indicado (o mes actual por defecto).
 
@@ -462,23 +407,74 @@ def calculate_projected_balance(account_id: str, month: str | None = None) -> fl
     Si no hay budgets con disponibilidad, el resultado se mantiene negativo.
     """
     target_month = month or get_current_month()
-    _, resultado = _get_projected_budget_details(account_id, target_month)
-    return resultado
+    real = calculate_real_balance(account_id, target_month)
 
-def get_budget_available_by_id_for_month(month: str) -> dict:
-    """Returns a map of budget_id -> available after projected-deficit distribution."""
-    available_by_budget_id = {}
-    accounts = _get_service("accounts").get_all()
+    # Gastos fijos pendientes for target month
+    fixed_this_month = get_fixed_expenses_for_month(target_month)
+    fixed_pendientes = sum(fe['monto'] for fe in fixed_this_month if fe['account_id'] == account_id and fe['estado'] == 'impagado')
 
-    for acc in accounts:
-        acc_id = acc.get("id")
-        if not acc_id:
+    # Presupuestos
+    active_budgets = get_active_budgets(target_month)
+    spending = calculate_category_spending(target_month, account_id)
+
+    # Calcula detalles de cada presupuesto
+    budget_details = []
+    pending_budget_impact = 0.0
+
+    for b in active_budgets:
+        if b['account_id'] != account_id:
             continue
-        budget_details, _ = _get_projected_budget_details(acc_id, month)
-        for bd in budget_details:
-            available_by_budget_id[bd["budget_id"]] = bd["available"]
+        cat_id = b['categoria_id']
+        presupuesto = b['monto']
+        real_spent = spending.get(cat_id, 0.0)
+        available = presupuesto - real_spent
 
-    return available_by_budget_id
+        budget_details.append({
+            'budget_id': b['id'],
+            'presupuesto': presupuesto,
+            'real_spent': real_spent,
+            'available': available
+        })
+
+        if real_spent < presupuesto:
+            pending_budget_impact += available
+
+    resultado = real - fixed_pendientes - pending_budget_impact
+
+    # Si el resultado es negativo, distribuir el déficit entre budgets con disponibilidad
+    if resultado < 0:
+        budgets_with_available = [bd for bd in budget_details if bd['available'] > 0]
+
+        if budgets_with_available:
+            # Hay presupuestos con dinero disponible para absorber el déficit
+            deficit = abs(resultado)
+            total_available = sum(bd['available'] for bd in budgets_with_available)
+
+            if total_available >= deficit:
+                # El déficit se puede cubrir completamente con los budgets disponibles
+                # Distribuir el déficit proporcionalmente
+                for bd in budgets_with_available:
+                    proportion = bd['available'] / total_available if total_available > 0 else 0
+                    reduction = deficit * proportion
+                    bd['available'] -= reduction
+
+                # El resultado proyectado ahora es 0.0 (déficit absorbido completamente)
+                resultado = 0.0
+            else:
+                # El déficit es mayor que la disponibilidad total: distribuir todo lo disponible
+                # y dejar el déficit restante como resultado negativo
+                total_deficit_absorbed = total_available
+                remaining_deficit = deficit - total_available
+
+                for bd in budgets_with_available:
+                    proportion = bd['available'] / total_available if total_available > 0 else 0
+                    reduction = total_deficit_absorbed * proportion
+                    bd['available'] -= reduction
+
+                resultado = -remaining_deficit
+        # Si no hay disponibilidad en budgets, el resultado se mantiene negativo
+
+    return resultado
 
 def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
     """Returns incoming pending loans for an account, optionally filtered by month."""
