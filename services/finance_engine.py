@@ -401,80 +401,30 @@ def calculate_projected_balance(account_id: str, month: str | None = None) -> fl
     El saldo real ya incluye los gastos reales registrados. Por eso aquí solo se resta:
     - gastos fijos impagados del mes objetivo, y
     - la parte pendiente de cada presupuesto activo (presupuesto - gasto_real, si es positiva).
-
-    Si el resultado es negativo y hay budgets con dinero disponible, el déficit se distribuye
-    proporcionalmente entre ellos y el resultado vuelve a 0.0.
-    Si no hay budgets con disponibilidad, el resultado se mantiene negativo.
     """
     target_month = month or get_current_month()
     real = calculate_real_balance(account_id, target_month)
-
+    
     # Gastos fijos pendientes for target month
     fixed_this_month = get_fixed_expenses_for_month(target_month)
     fixed_pendientes = sum(fe['monto'] for fe in fixed_this_month if fe['account_id'] == account_id and fe['estado'] == 'impagado')
-
+    
     # Presupuestos
     active_budgets = get_active_budgets(target_month)
     spending = calculate_category_spending(target_month, account_id)
-
-    # Calcula detalles de cada presupuesto
-    budget_details = []
+    
+    # Solo resta la parte de presupuesto que aún no se ha ejecutado en gasto real.
     pending_budget_impact = 0.0
-
     for b in active_budgets:
-        if b['account_id'] != account_id:
-            continue
+        if b['account_id'] != account_id: continue
         cat_id = b['categoria_id']
         presupuesto = b['monto']
         real_spent = spending.get(cat_id, 0.0)
-        available = presupuesto - real_spent
-
-        budget_details.append({
-            'budget_id': b['id'],
-            'presupuesto': presupuesto,
-            'real_spent': real_spent,
-            'available': available
-        })
 
         if real_spent < presupuesto:
-            pending_budget_impact += available
-
-    resultado = real - fixed_pendientes - pending_budget_impact
-
-    # Si el resultado es negativo, distribuir el déficit entre budgets con disponibilidad
-    if resultado < 0:
-        budgets_with_available = [bd for bd in budget_details if bd['available'] > 0]
-
-        if budgets_with_available:
-            # Hay presupuestos con dinero disponible para absorber el déficit
-            deficit = abs(resultado)
-            total_available = sum(bd['available'] for bd in budgets_with_available)
-
-            if total_available >= deficit:
-                # El déficit se puede cubrir completamente con los budgets disponibles
-                # Distribuir el déficit proporcionalmente
-                for bd in budgets_with_available:
-                    proportion = bd['available'] / total_available if total_available > 0 else 0
-                    reduction = deficit * proportion
-                    bd['available'] -= reduction
-
-                # El resultado proyectado ahora es 0.0 (déficit absorbido completamente)
-                resultado = 0.0
-            else:
-                # El déficit es mayor que la disponibilidad total: distribuir todo lo disponible
-                # y dejar el déficit restante como resultado negativo
-                total_deficit_absorbed = total_available
-                remaining_deficit = deficit - total_available
-
-                for bd in budgets_with_available:
-                    proportion = bd['available'] / total_available if total_available > 0 else 0
-                    reduction = total_deficit_absorbed * proportion
-                    bd['available'] -= reduction
-
-                resultado = -remaining_deficit
-        # Si no hay disponibilidad en budgets, el resultado se mantiene negativo
-
-    return resultado
+            pending_budget_impact += (presupuesto - real_spent)
+            
+    return real - fixed_pendientes - pending_budget_impact
 
 def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
     """Returns incoming pending loans for an account, optionally filtered by month."""
@@ -545,16 +495,7 @@ def get_month_summary(month: str) -> dict:
                 "resultado_proyectado_frozen": float(month_snapshot.get("resultado_proyectado_frozen", 0.0)),
                 "status": "open",
             })
-
-        # CORRECCIÓN: Obtener remaining_from_previous_month del mes anterior
-        previous_month = _get_previous_month(month)
-        if month >= "2026-03" and previous_month >= "2026-03":
-            previous_snapshot = get_monthly_account_snapshot(previous_month, main_id)
-            if previous_snapshot:
-                if previous_snapshot.get("status") == "closed":
-                    remaining_from_previous_month = float(previous_snapshot.get("resultado_real_closed", 0.0))
-                else:
-                    remaining_from_previous_month = float(previous_snapshot.get("remaining_from_previous_month", 0.0))
+        remaining_from_previous_month = float(month_snapshot.get("remaining_from_previous_month", 0.0)) if month_snapshot else 0.0
 
         main_salaries = sum(calculate_salary_net(s['id'], month) for s in salaries if s.get('account_id') == main_id and is_active_in_month(
             s['fecha_inicio'].date() if isinstance(s['fecha_inicio'], datetime) else datetime.strptime(s['fecha_inicio'][:10], "%Y-%m-%d").date(),
