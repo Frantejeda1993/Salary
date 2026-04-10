@@ -94,9 +94,19 @@ def _ensure_future_projection_snapshot(month: str, account_id: str, resultado_pr
         _ensure_future_projection_snapshot(previous_month, account_id, 0.0)
         previous_snapshot = get_monthly_account_snapshot(previous_month, account_id)
 
-    remaining_from_previous_month = _get_snapshot_effective_result(previous_snapshot)
-    if remaining_from_previous_month is None:
-        remaining_from_previous_month = float(previous_snapshot.get("remaining_from_previous_month", 0.0)) if previous_snapshot else 0.0
+    # Determina el remaining según el estado del mes anterior
+    remaining_from_previous_month = 0.0
+    if previous_snapshot:
+        status = previous_snapshot.get("status")
+        if status == "closed":
+            # Mes anterior cerrado: usar resultado_real_closed
+            remaining_from_previous_month = float(previous_snapshot.get("resultado_real_closed", 0.0))
+        elif status == "open":
+            # Mes anterior abierto: usar resultado_proyectado_frozen
+            remaining_from_previous_month = float(previous_snapshot.get("resultado_proyectado_frozen", 0.0))
+        else:
+            # Fallback: usar remaining_from_previous_month
+            remaining_from_previous_month = float(previous_snapshot.get("remaining_from_previous_month", 0.0))
 
     return upsert_monthly_account_snapshot(month, account_id, {
         "is_main_account_for_month": True,
@@ -533,19 +543,17 @@ def get_month_summary(month: str) -> dict:
             (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
         )
         
+        # SIEMPRE recalcula para asegurar que incluye transferencias
+        resultado_real = remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed - main_transfers_out + main_transfers_in
+        
+        # Si el mes está cerrado, guarda el resultado recalculado en el snapshot
         if month_snapshot and month_snapshot.get("status") == "closed":
-            # Para meses cerrados, recalcula siempre con la fórmula correcta
-            # para asegurar que incluye transferencias
-            resultado_real = remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed - main_transfers_out + main_transfers_in
-            # Pero guarda el resultado en el snapshot para consistencia
             upsert_monthly_account_snapshot(month, main_id, {
                 "is_main_account_for_month": True,
                 "remaining_from_previous_month": remaining_from_previous_month,
                 "resultado_real_closed": resultado_real,
                 "status": "closed",
             })
-        else:
-            resultado_real = remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed - main_transfers_out + main_transfers_in
 
         resultado_real_details = {
             "main_account_id": main_id,
