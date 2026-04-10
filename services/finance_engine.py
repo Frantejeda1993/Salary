@@ -80,6 +80,20 @@ def _get_snapshot_effective_result(snapshot: Optional[dict]) -> Optional[float]:
     return None
 
 
+def _resolve_remaining_from_previous_month(month: str, account_id: str) -> float:
+    """Resuelve el arrastre desde el mes anterior aun cuando no exista snapshot del mes actual."""
+    previous_month = _get_previous_month(month)
+    previous_snapshot = get_monthly_account_snapshot(previous_month, account_id)
+    if not previous_snapshot:
+        return 0.0
+
+    previous_effective = _get_snapshot_effective_result(previous_snapshot)
+    if previous_effective is not None:
+        return float(previous_effective)
+
+    return float(previous_snapshot.get("remaining_from_previous_month", 0.0))
+
+
 def _ensure_future_projection_snapshot(month: str, account_id: str, resultado_proyectado: float) -> dict:
     """
     Creates/updates a future month snapshot for the selected main account.
@@ -104,6 +118,58 @@ def _ensure_future_projection_snapshot(month: str, account_id: str, resultado_pr
         "resultado_proyectado_frozen": float(resultado_proyectado),
         "status": "future_projection",
     })
+
+
+def _distribute_negative_projection_across_budgets(resultado_proyectado: float, budgets: list, spending: dict) -> tuple[float, dict]:
+    """
+    Si el resultado proyectado es negativo, reparte el déficit entre los presupuestos
+    con dinero disponible (monto - gasto real > 0).
+    Devuelve (resultado_ajustado, {budget_id: ajuste_aplicado}).
+    """
+    if resultado_proyectado >= 0:
+        return resultado_proyectado, {}
+
+    available_by_budget = {}
+    for b in budgets:
+        budget_id = b.get("id")
+        if not budget_id:
+            continue
+        available = b.get("monto", 0.0) - spending.get(b.get("categoria_id"), 0.0)
+        if available > 0:
+            available_by_budget[budget_id] = float(available)
+
+    eligible_ids = [budget_id for budget_id, available in available_by_budget.items() if available > 0]
+    if not eligible_ids:
+        return resultado_proyectado, {}
+
+    total_deficit = abs(resultado_proyectado)
+    remaining_deficit = total_deficit
+    adjustments = {budget_id: 0.0 for budget_id in eligible_ids}
+
+    while remaining_deficit > 1e-9 and eligible_ids:
+        share = remaining_deficit / len(eligible_ids)
+        covered_this_round = 0.0
+        next_eligible_ids = []
+
+        for budget_id in eligible_ids:
+            available = available_by_budget[budget_id]
+            applied = min(available, share)
+            if applied > 0:
+                adjustments[budget_id] += applied
+                available_by_budget[budget_id] -= applied
+                covered_this_round += applied
+            if available_by_budget[budget_id] > 1e-9:
+                next_eligible_ids.append(budget_id)
+
+        if covered_this_round <= 1e-9:
+            break
+
+        remaining_deficit -= covered_this_round
+        eligible_ids = next_eligible_ids
+
+    covered_total = total_deficit - remaining_deficit
+    adjusted_result = resultado_proyectado + covered_total
+    return adjusted_result, {k: v for k, v in adjustments.items() if v > 0}
 
 
 def _calculate_main_account_result_for_month(account_id: str, month: str, remaining_from_previous_month: float = 0.0) -> float:
@@ -495,7 +561,10 @@ def get_month_summary(month: str) -> dict:
                 "resultado_proyectado_frozen": float(month_snapshot.get("resultado_proyectado_frozen", 0.0)),
                 "status": "open",
             })
-        remaining_from_previous_month = float(month_snapshot.get("remaining_from_previous_month", 0.0)) if month_snapshot else 0.0
+        if month_snapshot:
+            remaining_from_previous_month = float(month_snapshot.get("remaining_from_previous_month", 0.0))
+        else:
+            remaining_from_previous_month = _resolve_remaining_from_previous_month(month, main_id)
 
         main_salaries = sum(calculate_salary_net(s['id'], month) for s in salaries if s.get('account_id') == main_id and is_active_in_month(
             s['fecha_inicio'].date() if isinstance(s['fecha_inicio'], datetime) else datetime.strptime(s['fecha_inicio'][:10], "%Y-%m-%d").date(),
@@ -537,6 +606,11 @@ def get_month_summary(month: str) -> dict:
     gastos_no_presupuestados = sum(v for k, v in spending.items() if k not in budget_cat_ids)
     
     resultado_proyectado = ingreso_total + ingresos_extra_total - gastos_fijos_total - impacto_presupuestos - gastos_no_presupuestados
+    resultado_proyectado, projected_budget_adjustments = _distribute_negative_projection_across_budgets(
+        resultado_proyectado,
+        budgets,
+        spending
+    )
 
     if is_future_month and main_acc:
         main_id = main_acc["id"]
@@ -555,5 +629,6 @@ def get_month_summary(month: str) -> dict:
         "remaining_from_previous_month": remaining_from_previous_month,
         "resultado_real": resultado_real,
         "resultado_proyectado": resultado_proyectado,
+        "projected_budget_adjustments": projected_budget_adjustments,
         "resultado_real_details": resultado_real_details
     }
