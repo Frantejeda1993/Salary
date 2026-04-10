@@ -111,6 +111,7 @@ def _calculate_main_account_result_for_month(account_id: str, month: str, remain
     salaries = _get_service("salaries").get_all()
     expenses = _get_service("expenses").get_all()
     incomes = _get_service("incomes").get_all()
+    transfers = _get_service("transfers").get_all()
     fixed_all = get_fixed_expenses_for_month(month)
 
     main_salaries = sum(calculate_salary_net(s['id'], month) for s in salaries if s.get('account_id') == account_id and is_active_in_month(
@@ -140,8 +141,18 @@ def _calculate_main_account_result_for_month(account_id: str, month: str, remain
         for l in get_pending_loans_for_account(account_id, month)
     )
     main_extra_incomes = main_base_incomes + main_loans_total
+    main_transfers_out = sum(
+        t['monto'] for t in transfers
+        if t.get('cuenta_origen') == account_id and
+        (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+    )
+    main_transfers_in = sum(
+        t['monto'] for t in transfers
+        if t.get('cuenta_destino') == account_id and
+        (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+    )
 
-    return remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed
+    return remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed - main_transfers_out + main_transfers_in
 
 
 def run_month_rollover_if_needed(today=None) -> dict:
@@ -574,11 +585,21 @@ def get_month_summary(month: str) -> dict:
         main_loans_total = sum(l.get('outstanding_amount', l.get('monto', 0.0)) for l in main_loans)
         
         main_extra_incomes = main_base_incomes + main_loans_total
+        main_transfers_out = sum(
+            t['monto'] for t in transfers
+            if t.get('cuenta_origen') == main_id and
+            (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+        )
+        main_transfers_in = sum(
+            t['monto'] for t in transfers
+            if t.get('cuenta_destino') == main_id and
+            (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+        )
         
         if month_snapshot and month_snapshot.get("status") == "closed":
             resultado_real = float(month_snapshot.get("resultado_real_closed", 0.0))
         else:
-            resultado_real = remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed
+            resultado_real = remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed - main_transfers_out + main_transfers_in
 
         resultado_real_details = {
             "main_account_id": main_id,
