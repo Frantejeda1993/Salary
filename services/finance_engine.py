@@ -534,7 +534,16 @@ def get_month_summary(month: str) -> dict:
         )
         
         if month_snapshot and month_snapshot.get("status") == "closed":
-            resultado_real = float(month_snapshot.get("resultado_real_closed", 0.0))
+            # Para meses cerrados, recalcula siempre con la fórmula correcta
+            # para asegurar que incluye transferencias
+            resultado_real = remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed - main_transfers_out + main_transfers_in
+            # Pero guarda el resultado en el snapshot para consistencia
+            upsert_monthly_account_snapshot(month, main_id, {
+                "is_main_account_for_month": True,
+                "remaining_from_previous_month": remaining_from_previous_month,
+                "resultado_real_closed": resultado_real,
+                "status": "closed",
+            })
         else:
             resultado_real = remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed - main_transfers_out + main_transfers_in
 
