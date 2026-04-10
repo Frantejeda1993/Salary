@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending, get_fixed_expenses_for_month, run_month_rollover_if_needed
+from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending, get_fixed_expenses_for_month, run_month_rollover_if_needed, get_budget_available_by_id_for_month
 from utils.date_utils import get_current_month, get_month_options
 from services.firestore_service import FirestoreService, clear_firestore_read_caches
 from utils.money_utils import format_currency
@@ -75,6 +75,7 @@ st.subheader("Budget Usage Breakdown")
 active_budgets = get_active_budgets(selected_month)
 if active_budgets:
     spending = calculate_category_spending(selected_month)
+    available_by_budget_id = get_budget_available_by_id_for_month(selected_month)
     cat_srv = FirestoreService("categories")
     categories = {c['id']: c['nombre'] for c in cat_srv.get_all()}
     
@@ -88,7 +89,7 @@ if active_budgets:
         
         limit = b.get('monto', 0.0)
         used = spending.get(b.get('categoria_id'), 0.0)
-        available = limit - used
+        available = available_by_budget_id.get(b.get('id'), limit - used)
         
         pct_used = min(used / limit if limit > 0 else 0, 1.0)
         
