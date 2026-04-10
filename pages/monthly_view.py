@@ -64,7 +64,8 @@ with rc1:
 with rc2:
     if res_details:
         main_id = res_details['main_account_id']
-        main_proj = calculate_projected_balance(main_id, selected_month)
+        proj_result = calculate_projected_balance(main_id, selected_month)
+        main_proj = proj_result['resultado']
         st.success(f"### Resultado Proyectado ({res_details['main_account_name']})\n# {format_currency(main_proj)}")
     else:
         st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")
@@ -77,6 +78,12 @@ if active_budgets:
     spending = calculate_category_spending(selected_month)
     cat_srv = FirestoreService("categories")
     categories = {c['id']: c['nombre'] for c in cat_srv.get_all()}
+
+    # Obtener los detalles de presupuestos con disponibilidad actualizada para cada cuenta
+    account_budget_details = {}
+    for a in accounts:
+        proj_result = calculate_projected_balance(a['id'], selected_month)
+        account_budget_details[a['id']] = {bd['categoria_id']: bd['available'] for bd in proj_result['budget_details']}
     
     for b in active_budgets:
         cat_name = categories.get(b.get('categoria_id'), 'Unknown Category')
@@ -88,7 +95,13 @@ if active_budgets:
         
         limit = b.get('monto', 0.0)
         used = spending.get(b.get('categoria_id'), 0.0)
-        available = limit - used
+
+        # Obtener el available actualizado considerando la distribución del déficit
+        account_id = b.get('account_id')
+        if account_id in account_budget_details and b.get('categoria_id') in account_budget_details[account_id]:
+            available = account_budget_details[account_id][b.get('categoria_id')]
+        else:
+            available = limit - used
         
         pct_used = min(used / limit if limit > 0 else 0, 1.0)
         
@@ -164,7 +177,7 @@ if accounts:
         for a in bank_accounts:
             acc_name = a.get('nombre')
             real_bal = calculate_real_balance(a['id'], selected_month)
-            proj_bal = calculate_projected_balance(a['id'], selected_month)
+            proj_bal = calculate_projected_balance(a['id'], selected_month)['resultado']
             
             subtotal_real += real_bal
             subtotal_proj += proj_bal

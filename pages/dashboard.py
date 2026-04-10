@@ -23,7 +23,7 @@ accounts = acc_srv.get_all()
 
 # --- TOP METRICS ---
 total_real = sum(calculate_real_balance(a['id']) for a in accounts) if accounts else 0.0
-total_proj = sum(calculate_projected_balance(a['id']) for a in accounts) if accounts else 0.0
+total_proj = sum(calculate_projected_balance(a['id'])['resultado'] for a in accounts) if accounts else 0.0
 
 col1, col2 = st.columns(2)
 with col1:
