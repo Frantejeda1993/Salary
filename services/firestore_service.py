@@ -1,4 +1,5 @@
 import streamlit as st
+from google.api_core import exceptions as gcloud_exceptions
 from google.cloud import firestore
 from google.oauth2 import service_account
 
@@ -16,24 +17,45 @@ def get_db():
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _cached_get_all(collection_name: str) -> list:
-    collection = get_db().collection(collection_name)
-    docs = collection.stream()
-    return [{"id": doc.id, **doc.to_dict()} for doc in docs]
+    try:
+        collection = get_db().collection(collection_name)
+        docs = collection.stream()
+        return [{"id": doc.id, **doc.to_dict()} for doc in docs]
+    except gcloud_exceptions.ResourceExhausted:
+        st.error(
+            "Firestore quota/rate limit reached while loading data. "
+            "Please wait a moment and reload the app."
+        )
+        return []
 
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _cached_get_by_field(collection_name: str, field: str, operator: str, value) -> list:
-    collection = get_db().collection(collection_name)
-    docs = collection.where(filter=firestore.FieldFilter(field, operator, value)).stream()
-    return [{"id": doc.id, **doc.to_dict()} for doc in docs]
+    try:
+        collection = get_db().collection(collection_name)
+        docs = collection.where(filter=firestore.FieldFilter(field, operator, value)).stream()
+        return [{"id": doc.id, **doc.to_dict()} for doc in docs]
+    except gcloud_exceptions.ResourceExhausted:
+        st.error(
+            "Firestore quota/rate limit reached while loading filtered data. "
+            "Please wait a moment and reload the app."
+        )
+        return []
 
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _cached_get_by_id(collection_name: str, doc_id: str) -> dict:
-    doc = get_db().collection(collection_name).document(doc_id).get()
-    if doc.exists:
-        return {"id": doc.id, **doc.to_dict()}
-    return None
+    try:
+        doc = get_db().collection(collection_name).document(doc_id).get()
+        if doc.exists:
+            return {"id": doc.id, **doc.to_dict()}
+        return None
+    except gcloud_exceptions.ResourceExhausted:
+        st.error(
+            "Firestore quota/rate limit reached while loading an item. "
+            "Please wait a moment and reload the app."
+        )
+        return None
 
 
 def _clear_firestore_caches():
