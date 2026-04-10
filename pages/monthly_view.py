@@ -48,7 +48,9 @@ rc1, rc2 = st.columns(2)
 with rc1:
     res_details = summary.get('resultado_real_details')
     if res_details:
-        st.info(f"### Resultado Real ({res_details['main_account_name']})\n# {format_currency(summary['resultado_real'])}")
+        main_id = res_details['main_account_id']
+        main_real = calculate_real_balance(main_id, selected_month)
+        st.info(f"### Resultado Real ({res_details['main_account_name']})\n# {format_currency(main_real)}")
         pending_loans = res_details.get('pending_loans', [])
         if pending_loans:
             for l in pending_loans:
@@ -61,7 +63,10 @@ with rc1:
         st.info(f"### Resultado Real\n# {format_currency(summary['resultado_real'])}")
 with rc2:
     if res_details:
-        st.success(f"### Resultado Proyectado ({res_details['main_account_name']})\n# {format_currency(summary['resultado_proyectado'])}")
+        main_id = res_details['main_account_id']
+        proj_result = calculate_projected_balance(main_id, selected_month)
+        main_proj = proj_result['resultado']
+        st.success(f"### Resultado Proyectado ({res_details['main_account_name']})\n# {format_currency(main_proj)}")
     else:
         st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")
 
