@@ -30,7 +30,6 @@ st.divider()
 st.subheader(f"Summary for {selected_month}")
 
 summary = get_month_summary(selected_month)
-projected_budget_adjustments = summary.get('projected_budget_adjustments', {})
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Ingreso Total (Salaries)", format_currency(summary['ingreso_total']))
@@ -90,9 +89,6 @@ if active_budgets:
         limit = b.get('monto', 0.0)
         used = spending.get(b.get('categoria_id'), 0.0)
         available = limit - used
-        projected_adjustment = projected_budget_adjustments.get(b.get('id'), 0.0)
-        if projected_adjustment > 0:
-            available -= projected_adjustment
         
         pct_used = min(used / limit if limit > 0 else 0, 1.0)
         
