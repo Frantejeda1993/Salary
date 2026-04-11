@@ -44,6 +44,29 @@ def _cached_get_by_field(collection_name: str, field: str, operator: str, value)
 
 
 @st.cache_data(ttl=120, show_spinner=False)
+def _cached_get_by_fields(collection_name: str, filters: tuple) -> list:
+    """
+    filters format:
+        (
+            (field_name, operator, value),
+            ...
+        )
+    """
+    try:
+        query = get_db().collection(collection_name)
+        for field, operator, value in filters:
+            query = query.where(filter=firestore.FieldFilter(field, operator, value))
+        docs = query.stream()
+        return [{"id": doc.id, **doc.to_dict()} for doc in docs]
+    except gcloud_exceptions.ResourceExhausted:
+        st.error(
+            "Firestore quota/rate limit reached while loading multi-filter data. "
+            "Please wait a moment and reload the app."
+        )
+        return []
+
+
+@st.cache_data(ttl=120, show_spinner=False)
 def _cached_get_by_id(collection_name: str, doc_id: str) -> dict:
     try:
         doc = get_db().collection(collection_name).document(doc_id).get()
@@ -61,6 +84,7 @@ def _cached_get_by_id(collection_name: str, doc_id: str) -> dict:
 def _clear_firestore_caches():
     _cached_get_all.clear()
     _cached_get_by_field.clear()
+    _cached_get_by_fields.clear()
     _cached_get_by_id.clear()
 
 
@@ -79,6 +103,10 @@ class FirestoreService:
 
     def get_by_field(self, field: str, operator: str, value) -> list:
         return _cached_get_by_field(self.collection_name, field, operator, value)
+
+    def get_by_fields(self, filters: list[tuple]) -> list:
+        # tuple(filters) keeps cache key hashable and stable for st.cache_data
+        return _cached_get_by_fields(self.collection_name, tuple(filters))
 
     def add(self, data: dict) -> str:
         # Ensure we don't save 'id' field to the document body itself
