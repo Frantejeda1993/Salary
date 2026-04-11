@@ -16,8 +16,11 @@ def _get_monthly_snapshot_service():
 def get_monthly_account_snapshot(month: str, account_id: str) -> Optional[dict]:
     """Returns the monthly snapshot for (month, account_id), if present."""
     snapshot_srv = _get_monthly_snapshot_service()
-    snapshots = snapshot_srv.get_by_field("month", "==", month)
-    return next((s for s in snapshots if s.get("account_id") == account_id), None)
+    snapshots = snapshot_srv.get_by_fields([
+        ("month", "==", month),
+        ("account_id", "==", account_id),
+    ])
+    return snapshots[0] if snapshots else None
 
 
 def upsert_monthly_account_snapshot(month: str, account_id: str, data: dict) -> dict:
