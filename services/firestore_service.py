@@ -86,6 +86,8 @@ def _clear_firestore_caches():
     _cached_get_by_field.clear()
     _cached_get_by_fields.clear()
     _cached_get_by_id.clear()
+    # Also clear derived cache_data computations that depend on Firestore reads.
+    st.cache_data.clear()
 
 
 def clear_firestore_read_caches():
