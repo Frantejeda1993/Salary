@@ -1,6 +1,6 @@
 import streamlit as st
 from datetime import date, datetime
-from services.firestore_service import FirestoreService
+from services.firestore_service import FirestoreService, clear_firestore_read_caches
 from models.expense import Expense
 from models.income import Income
 from models.fuel_expense import FuelExpense
@@ -8,6 +8,11 @@ from models.transfer import Transfer
 from utils.money_utils import format_currency
 
 st.title("💸 Transactions (Real)")
+refresh_col, _ = st.columns([1, 5])
+with refresh_col:
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        clear_firestore_read_caches()
+        st.rerun()
 
 cat_srv = FirestoreService("categories")
 acc_srv = FirestoreService("accounts")
