@@ -10,8 +10,8 @@ st.set_page_config(
 # Navigation
 pages = {
     "Overview": [
-        st.Page("pages/dashboard.py", title="Dashboard", icon="📊", default=True),
-        st.Page("pages/monthly_view.py", title="Monthly View", icon="📅"),
+        st.Page("pages/dashboard.py", title="Dashboard", icon="📊"),
+        st.Page("pages/monthly_view.py", title="Monthly View", icon="📅", default=True),
     ],
     "Transactions": [
         st.Page("pages/transactions.py", title="Expenses & Income", icon="💸"),

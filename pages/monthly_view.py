@@ -6,6 +6,11 @@ from services.firestore_service import FirestoreService, clear_firestore_read_ca
 from utils.money_utils import format_currency
 
 st.title("📅 Monthly View Breakdown")
+refresh_col, _ = st.columns([1, 5])
+with refresh_col:
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        clear_firestore_read_caches()
+        st.rerun()
 
 acc_srv = FirestoreService("accounts")
 bank_srv = FirestoreService("banks")
