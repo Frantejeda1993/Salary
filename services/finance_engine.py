@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+import streamlit as st
 from dateutil.relativedelta import relativedelta
 from utils.date_utils import is_active_in_month, get_current_month, parse_month
 from services.firestore_service import FirestoreService
@@ -224,6 +225,7 @@ def run_month_rollover_if_needed(today=None) -> dict:
         "skipped": False
     }
 
+@st.cache_data(ttl=120, show_spinner=False)
 def calculate_salary_net(salary_id: str, month: str) -> float:
     """Calculates the net salary for a given month considering active deductions and overtimes."""
     salary_srv = _get_service("salaries")
@@ -276,6 +278,7 @@ def calculate_salary_net(salary_id: str, month: str) -> float:
             
     return net - total_deductions
 
+@st.cache_data(ttl=120, show_spinner=False)
 def _get_account_historical_salary_incomes(account_id: str, up_to_month: str = None) -> float:
     """Calculates total net salary incomes received in the account up to a certain month (inclusive)."""
     salary_srv = _get_service("salaries")
@@ -309,6 +312,7 @@ def _get_account_historical_salary_incomes(account_id: str, up_to_month: str = N
             
     return total
 
+@st.cache_data(ttl=120, show_spinner=False)
 def calculate_real_balance(account_id: str, month: str | None = None) -> float:
     """Calculated as: saldo_inicial + sueldos netos_pasados + ingresos_extra - gastos - transferencias_salientes + transferencias_entrantes"""
     account = _get_service("accounts").get_by_id(account_id)
@@ -347,6 +351,7 @@ def calculate_real_balance(account_id: str, month: str | None = None) -> float:
     
     return balance
 
+@st.cache_data(ttl=120, show_spinner=False)
 def get_active_budgets(month: str) -> list:
     """Returns all budgets active in a given month."""
     budgets = _get_service("budgets").get_all()
@@ -360,6 +365,7 @@ def get_active_budgets(month: str) -> list:
             active.append(b)
     return active
 
+@st.cache_data(ttl=120, show_spinner=False)
 def get_fixed_expenses_for_month(month: str) -> list:
     """Returns fixed expenses active in the month along with their payment status."""
     fixed_exp_srv = _get_service("fixed_expenses")
@@ -389,6 +395,7 @@ def get_fixed_expenses_for_month(month: str) -> list:
             
     return active_in_month
 
+@st.cache_data(ttl=120, show_spinner=False)
 def calculate_category_spending(month: str, account_id: str = None) -> dict:
     """Calculates spending directly from 'expenses' mapping category_id -> amount for a given month."""
     expenses = _get_service("expenses").get_all()
@@ -419,6 +426,7 @@ def calculate_category_spending(month: str, account_id: str = None) -> dict:
                 
     return spending
 
+@st.cache_data(ttl=120, show_spinner=False)
 def calculate_projected_balance(account_id: str, month: str | None = None) -> dict:
     """Calcula el saldo proyectado para el mes indicado (o mes actual por defecto).
 
@@ -517,6 +525,7 @@ def get_projected_balance_value(account_id: str, month: str | None = None) -> fl
     result = calculate_projected_balance(account_id, month)
     return result['resultado']
 
+@st.cache_data(ttl=120, show_spinner=False)
 def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
     """Returns incoming pending loans for an account, optionally filtered by month."""
     transfers = _get_service("transfers").get_by_field("cuenta_destino", "==", account_id)
@@ -531,6 +540,7 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
         ]
     return pending_loans
 
+@st.cache_data(ttl=120, show_spinner=False)
 def get_month_summary(month: str) -> dict:
     """Returns summary for month view."""
     current_month = get_current_month()

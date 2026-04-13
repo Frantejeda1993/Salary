@@ -20,11 +20,10 @@ if 'sel_month' not in st.session_state:
 selected_month = st.selectbox("Select Month", months, index=months.index(st.session_state['sel_month']) if st.session_state['sel_month'] in months else 0)
 st.session_state['sel_month'] = selected_month
 
-last_processed_month = st.session_state.get('monthly_view_last_processed_month')
-if last_processed_month != selected_month:
+if 'monthly_view_rollover_done' not in st.session_state:
     run_month_rollover_if_needed()
     clear_firestore_read_caches()
-    st.session_state['monthly_view_last_processed_month'] = selected_month
+    st.session_state['monthly_view_rollover_done'] = True
 
 st.divider()
 st.subheader(f"Summary for {selected_month}")
