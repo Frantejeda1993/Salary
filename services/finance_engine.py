@@ -4,6 +4,7 @@ import streamlit as st
 from dateutil.relativedelta import relativedelta
 from utils.date_utils import is_active_in_month, get_current_month, parse_month
 from services.firestore_service import FirestoreService
+from services.data_cache import load_all_data
 
 # Services for easy access
 def _get_service(collection_name):
@@ -16,11 +17,10 @@ def _get_monthly_snapshot_service():
 
 def get_monthly_account_snapshot(month: str, account_id: str) -> Optional[dict]:
     """Returns the monthly snapshot for (month, account_id), if present."""
-    snapshot_srv = _get_monthly_snapshot_service()
-    snapshots = snapshot_srv.get_by_fields([
-        ("month", "==", month),
-        ("account_id", "==", account_id),
-    ])
+    snapshots = [
+        s for s in load_all_data()["monthly_account_snapshots"]
+        if s.get("month") == month and s.get("account_id") == account_id
+    ]
     return snapshots[0] if snapshots else None
 
 
@@ -53,17 +53,17 @@ def upsert_monthly_account_snapshot(month: str, account_id: str, data: dict) -> 
 
 def resolve_main_account_for_month(month: str) -> Optional[dict]:
     """Resolves the main account for a month using snapshot state first."""
-    snapshot_srv = _get_monthly_snapshot_service()
-    month_snapshots = snapshot_srv.get_by_field("month", "==", month)
+    data = load_all_data()
+    month_snapshots = [s for s in data["monthly_account_snapshots"] if s.get("month") == month]
     main_snapshot = next((s for s in month_snapshots if s.get("is_main_account_for_month", False)), None)
 
     if main_snapshot and main_snapshot.get("account_id"):
-        account = _get_service("accounts").get_by_id(main_snapshot["account_id"])
+        account = next((a for a in data["accounts"] if a.get("id") == main_snapshot["account_id"]), None)
         if account:
             account["snapshot"] = main_snapshot
             return account
 
-    accounts = _get_service("accounts").get_all()
+    accounts = data["accounts"]
     return next((a for a in accounts if a.get("is_main", False)), None)
 
 
@@ -82,6 +82,16 @@ def _get_snapshot_effective_result(snapshot: Optional[dict]) -> Optional[float]:
         return float(snapshot.get("resultado_proyectado_frozen", 0.0))
 
     return None
+
+
+def _as_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+
+
+def _month_of(value) -> str:
+    return _as_date(value).strftime("%Y-%m")
 
 
 def _ensure_future_projection_snapshot(month: str, account_id: str, resultado_proyectado: float) -> dict:
@@ -122,15 +132,16 @@ def _ensure_future_projection_snapshot(month: str, account_id: str, resultado_pr
 
 def _calculate_main_account_result_for_month(account_id: str, month: str, remaining_from_previous_month: float = 0.0) -> float:
     """Calcula el resultado real de una cuenta principal para un mes."""
-    salaries = _get_service("salaries").get_all()
-    expenses = _get_service("expenses").get_all()
-    incomes = _get_service("incomes").get_all()
-    transfers = _get_service("transfers").get_all()
+    data = load_all_data()
+    salaries = data["salaries"]
+    expenses = data["expenses"]
+    incomes = data["incomes"]
+    transfers = data["transfers"]
     fixed_all = get_fixed_expenses_for_month(month)
 
     main_salaries = sum(calculate_salary_net(s['id'], month) for s in salaries if s.get('account_id') == account_id and is_active_in_month(
-        s['fecha_inicio'].date() if isinstance(s['fecha_inicio'], datetime) else datetime.strptime(s['fecha_inicio'][:10], "%Y-%m-%d").date(),
-        s['fecha_fin'].date() if isinstance(s['fecha_fin'], datetime) else datetime.strptime(s['fecha_fin'][:10], "%Y-%m-%d").date() if s.get('fecha_fin') else None,
+        _as_date(s['fecha_inicio']),
+        _as_date(s['fecha_fin']) if s.get('fecha_fin') else None,
         month
     ))
 
@@ -142,13 +153,13 @@ def _calculate_main_account_result_for_month(account_id: str, month: str, remain
     main_expenses = sum(
         e['monto'] for e in expenses
         if e.get('account_id') == account_id and
-        (e['fecha'].date() if isinstance(e['fecha'], datetime) else datetime.strptime(e['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+        _month_of(e['fecha']) == month
     )
 
     main_base_incomes = sum(
         i['monto'] for i in incomes
         if i.get('account_id') == account_id and
-        (i['fecha'].date() if isinstance(i['fecha'], datetime) else datetime.strptime(i['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+        _month_of(i['fecha']) == month
     )
     main_loans_total = sum(
         l.get('outstanding_amount', l.get('monto', 0.0))
@@ -158,12 +169,12 @@ def _calculate_main_account_result_for_month(account_id: str, month: str, remain
     main_transfers_out = sum(
         t['monto'] for t in transfers
         if t.get('cuenta_origen') == account_id and
-        (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+        _month_of(t['fecha']) == month
     )
     main_transfers_in = sum(
         t['monto'] for t in transfers
         if t.get('cuenta_destino') == account_id and
-        (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+        _month_of(t['fecha']) == month
     )
 
     return remaining_from_previous_month + main_salaries + main_extra_incomes - main_expenses - main_fixed - main_transfers_out + main_transfers_in
@@ -228,17 +239,15 @@ def run_month_rollover_if_needed(today=None) -> dict:
 @st.cache_data(ttl=120, show_spinner=False)
 def calculate_salary_net(salary_id: str, month: str) -> float:
     """Calculates the net salary for a given month considering active deductions and overtimes."""
-    salary_srv = _get_service("salaries")
-    overtime_srv = _get_service("overtimes")
-    
-    salary_data = salary_srv.get_by_id(salary_id)
+    data = load_all_data()
+    salary_data = next((s for s in data["salaries"] if s.get("id") == salary_id), None)
     if not salary_data:
         return 0.0
     
     bruto = salary_data.get('salario_bruto', 0.0)
     
     # Get overtime for this month
-    overtimes = overtime_srv.get_by_field("salary_id", "==", salary_id)
+    overtimes = [ot for ot in data["overtimes"] if ot.get("salary_id") == salary_id]
     overtime_amount = sum(ot.get('monto_bruto', 0.0) for ot in overtimes if ot.get('mes_aplicacion') == month)
     
     net = bruto + overtime_amount
@@ -281,24 +290,23 @@ def calculate_salary_net(salary_id: str, month: str) -> float:
 @st.cache_data(ttl=120, show_spinner=False)
 def _get_account_historical_salary_incomes(account_id: str, up_to_month: str = None) -> float:
     """Calculates total net salary incomes received in the account up to a certain month (inclusive)."""
-    salary_srv = _get_service("salaries")
-    salaries = salary_srv.get_by_field("account_id", "==", account_id)
+    data = load_all_data()
+    salaries = [s for s in data["salaries"] if s.get("account_id") == account_id]
     
     current_m = up_to_month or get_current_month()
     target_date = parse_month(current_m)
     
     total = 0.0
     for s in salaries:
-        start_date = s['fecha_inicio'].date() if isinstance(s['fecha_inicio'], datetime) else datetime.strptime(s['fecha_inicio'][:10], "%Y-%m-%d").date()
+        start_date = _as_date(s['fecha_inicio'])
         # End date might be None
         end_date = s.get('fecha_fin')
         if end_date:
-            end_date = end_date.date() if isinstance(end_date, datetime) else datetime.strptime(end_date[:10], "%Y-%m-%d").date()
+            end_date = _as_date(end_date)
             
         # Iterate months from start_date to min(target_date, end_date)
         # For simplicity, we can just check is_active_in_month for all months past
         # We need a proper way to iterate months.
-        from dateutil.relativedelta import relativedelta
         itr = start_date.replace(day=1)
         end_itr = target_date.replace(day=1)
         if end_date and end_date.replace(day=1) < end_itr:
@@ -315,7 +323,8 @@ def _get_account_historical_salary_incomes(account_id: str, up_to_month: str = N
 @st.cache_data(ttl=120, show_spinner=False)
 def calculate_real_balance(account_id: str, month: str | None = None) -> float:
     """Calculated as: saldo_inicial + sueldos netos_pasados + ingresos_extra - gastos - transferencias_salientes + transferencias_entrantes"""
-    account = _get_service("accounts").get_by_id(account_id)
+    data = load_all_data()
+    account = next((a for a in data["accounts"] if a.get("id") == account_id), None)
     if not account: return 0.0
     
     balance = account.get('saldo_inicial', 0.0)
@@ -325,28 +334,31 @@ def calculate_real_balance(account_id: str, month: str | None = None) -> float:
     balance += _get_account_historical_salary_incomes(account_id, target_month)
     
     # Extra incomes
-    incomes = _get_service("incomes").get_by_field("account_id", "==", account_id)
+    incomes = [i for i in data["incomes"] if i.get("account_id") == account_id]
     balance += sum(inc.get('monto', 0.0) for inc in incomes)
     
     # Expenses (gastos_pagados are essentially the expenses table)
-    expenses = _get_service("expenses").get_by_field("account_id", "==", account_id)
+    expenses = [e for e in data["expenses"] if e.get("account_id") == account_id]
     balance -= sum(exp.get('monto', 0.0) for exp in expenses)
     
     # Paid fixed expenses
-    fixed_exp_srv = _get_service("fixed_expenses")
-    fixed_inst_srv = _get_service("fixed_expense_instances")
-    all_fixed = fixed_exp_srv.get_by_field("account_id", "==", account_id)
+    all_fixed = [fe for fe in data["fixed_expenses"] if fe.get("account_id") == account_id]
+    instances_by_fixed_expense = {}
+    for inst in data["fixed_expense_instances"]:
+        fe_id = inst.get("fixed_expense_id")
+        if fe_id:
+            instances_by_fixed_expense.setdefault(fe_id, []).append(inst)
     for fe in all_fixed:
-        instances = fixed_inst_srv.get_by_field("fixed_expense_id", "==", fe['id'])
+        instances = instances_by_fixed_expense.get(fe['id'], [])
         paid_instances = [inst for inst in instances if inst.get('estado') == 'pagado']
         balance -= sum(inst.get('monto', fe.get('monto', 0.0)) for inst in paid_instances)
     
     # Transfers out
-    transfers_out = _get_service("transfers").get_by_field("cuenta_origen", "==", account_id)
+    transfers_out = [t for t in data["transfers"] if t.get("cuenta_origen") == account_id]
     balance -= sum(tr.get('monto', 0.0) for tr in transfers_out)
     
     # Transfers in
-    transfers_in = _get_service("transfers").get_by_field("cuenta_destino", "==", account_id)
+    transfers_in = [t for t in data["transfers"] if t.get("cuenta_destino") == account_id]
     balance += sum(tr.get('monto', 0.0) for tr in transfers_in)
     
     return balance
@@ -354,13 +366,13 @@ def calculate_real_balance(account_id: str, month: str | None = None) -> float:
 @st.cache_data(ttl=120, show_spinner=False)
 def get_active_budgets(month: str) -> list:
     """Returns all budgets active in a given month."""
-    budgets = _get_service("budgets").get_all()
+    budgets = load_all_data()["budgets"]
     active = []
     for b in budgets:
-        start = b['fecha_inicio'].date() if isinstance(b['fecha_inicio'], datetime) else datetime.strptime(b['fecha_inicio'][:10], "%Y-%m-%d").date()
+        start = _as_date(b['fecha_inicio'])
         end = b.get('fecha_fin')
         if end:
-            end = end.date() if isinstance(end, datetime) else datetime.strptime(end[:10], "%Y-%m-%d").date()
+            end = _as_date(end)
         if is_active_in_month(start, end, month):
             active.append(b)
     return active
@@ -368,21 +380,24 @@ def get_active_budgets(month: str) -> list:
 @st.cache_data(ttl=120, show_spinner=False)
 def get_fixed_expenses_for_month(month: str) -> list:
     """Returns fixed expenses active in the month along with their payment status."""
-    fixed_exp_srv = _get_service("fixed_expenses")
-    fixed_inst_srv = _get_service("fixed_expense_instances")
-    
-    fixed_exps = fixed_exp_srv.get_all()
+    data = load_all_data()
+    fixed_exps = data["fixed_expenses"]
+    instances_by_fixed_expense = {}
+    for inst in data["fixed_expense_instances"]:
+        fe_id = inst.get("fixed_expense_id")
+        if fe_id:
+            instances_by_fixed_expense.setdefault(fe_id, []).append(inst)
     active_in_month = []
     
     for fe in fixed_exps:
-        start = fe['fecha_inicio'].date() if isinstance(fe['fecha_inicio'], datetime) else datetime.strptime(fe['fecha_inicio'][:10], "%Y-%m-%d").date()
+        start = _as_date(fe['fecha_inicio'])
         end = fe.get('fecha_fin')
         if end:
-            end = end.date() if isinstance(end, datetime) else datetime.strptime(end[:10], "%Y-%m-%d").date()
+            end = _as_date(end)
             
         if is_active_in_month(start, end, month):
             # Check if paid
-            instances = fixed_inst_srv.get_by_field("fixed_expense_id", "==", fe['id'])
+            instances = instances_by_fixed_expense.get(fe['id'], [])
             month_instance = next((inst for inst in instances if inst.get('mes') == month), None)
             estado = month_instance.get('estado') if month_instance else 'impagado'
             monto_pagado = month_instance.get('monto') if month_instance else None
@@ -398,28 +413,27 @@ def get_fixed_expenses_for_month(month: str) -> list:
 @st.cache_data(ttl=120, show_spinner=False)
 def calculate_category_spending(month: str, account_id: str = None) -> dict:
     """Calculates spending directly from 'expenses' mapping category_id -> amount for a given month."""
-    expenses = _get_service("expenses").get_all()
+    data = load_all_data()
+    expenses = data["expenses"]
     if account_id:
         expenses = [e for e in expenses if e.get('account_id') == account_id]
         
     spending = {}
     for exp in expenses:
-        fecha = exp['fecha'].date() if isinstance(exp['fecha'], datetime) else datetime.strptime(exp['fecha'][:10], "%Y-%m-%d").date()
-        if fecha.strftime("%Y-%m") == month:
+        if _month_of(exp['fecha']) == month:
             cat_id = exp['categoria_id']
             spending[cat_id] = spending.get(cat_id, 0.0) + exp.get('monto', 0.0)
             
     # Include extra incomes reduction: Si tiene categoría reduce gasto de la categoría (user spec)
-    incomes = _get_service("incomes").get_all()
+    incomes = data["incomes"]
     if account_id:
         incomes = [i for i in incomes if i.get('account_id') == account_id]
         
+    categories_by_id = {c.get("id"): c for c in data["categories"]}
     for inc in incomes:
-        fecha = inc['fecha'].date() if isinstance(inc['fecha'], datetime) else datetime.strptime(inc['fecha'][:10], "%Y-%m-%d").date()
         cat_id = inc.get('categoria_id')
-        if fecha.strftime("%Y-%m") == month and cat_id:
-            cat_srv = _get_service("categories")
-            cat = cat_srv.get_by_id(cat_id)
+        if _month_of(inc['fecha']) == month and cat_id:
+            cat = categories_by_id.get(cat_id)
             if cat and cat.get('tipo', 'normal') != 'extra':
                 # Reduce expense
                 spending[cat_id] = spending.get(cat_id, 0.0) - inc.get('monto', 0.0)
@@ -528,7 +542,7 @@ def get_projected_balance_value(account_id: str, month: str | None = None) -> fl
 @st.cache_data(ttl=120, show_spinner=False)
 def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
     """Returns incoming pending loans for an account, optionally filtered by month."""
-    transfers = _get_service("transfers").get_by_field("cuenta_destino", "==", account_id)
+    transfers = [t for t in load_all_data()["transfers"] if t.get("cuenta_destino") == account_id]
     pending_loans = [
         t for t in transfers
         if t.get('is_loan', False) and t.get('status', 'pending') == 'pending' and t.get('outstanding_amount', t.get('monto', 0.0)) > 0
@@ -536,7 +550,7 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
     if month:
         pending_loans = [
             t for t in pending_loans
-            if (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+            if _month_of(t['fecha']) == month
         ]
     return pending_loans
 
@@ -545,12 +559,13 @@ def get_month_summary(month: str) -> dict:
     """Returns summary for month view."""
     current_month = get_current_month()
     is_future_month = month > current_month
+    data = load_all_data()
 
     # Ingreso total, Gastos fijos, Presupuestos, Gastos reales, Ingresos extra
-    salaries = _get_service("salaries").get_all()
+    salaries = data["salaries"]
     ingreso_total = sum(calculate_salary_net(s['id'], month) for s in salaries if is_active_in_month(
-            s['fecha_inicio'].date() if isinstance(s['fecha_inicio'], datetime) else datetime.strptime(s['fecha_inicio'][:10], "%Y-%m-%d").date(),
-            s['fecha_fin'].date() if isinstance(s['fecha_fin'], datetime) else datetime.strptime(s['fecha_fin'][:10], "%Y-%m-%d").date() if s.get('fecha_fin') else None,
+            _as_date(s['fecha_inicio']),
+            _as_date(s['fecha_fin']) if s.get('fecha_fin') else None,
             month
         ))
         
@@ -560,19 +575,19 @@ def get_month_summary(month: str) -> dict:
     budgets = get_active_budgets(month)
     presupuestos_total = sum(b['monto'] for b in budgets)
     
-    expenses = _get_service("expenses").get_all()
-    gastos_reales = sum(e['monto'] for e in expenses if (e['fecha'].date() if isinstance(e['fecha'], datetime) else datetime.strptime(e['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month)
+    expenses = data["expenses"]
+    gastos_reales = sum(e['monto'] for e in expenses if _month_of(e['fecha']) == month)
     
-    incomes = _get_service("incomes").get_all()
-    ingresos_extra_base = sum(i['monto'] for i in incomes if (i['fecha'].date() if isinstance(i['fecha'], datetime) else datetime.strptime(i['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month)
+    incomes = data["incomes"]
+    ingresos_extra_base = sum(i['monto'] for i in incomes if _month_of(i['fecha']) == month)
     
     # Add ALL pending loans for this month to extra incomes (global)
-    transfers = _get_service("transfers").get_all()
+    transfers = data["transfers"]
     loans_this_month = sum(
         t.get('outstanding_amount', t.get('monto', 0.0)) for t in transfers 
         if t.get('is_loan', False) and t.get('status', 'pending') == 'pending' and 
         t.get('outstanding_amount', t.get('monto', 0.0)) > 0 and
-        (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+        _month_of(t['fecha']) == month
     )
     
     ingresos_extra_total = ingresos_extra_base + loans_this_month
@@ -607,28 +622,32 @@ def get_month_summary(month: str) -> dict:
                     remaining_from_previous_month = float(previous_snapshot.get("remaining_from_previous_month", 0.0))
 
         main_salaries = sum(calculate_salary_net(s['id'], month) for s in salaries if s.get('account_id') == main_id and is_active_in_month(
-            s['fecha_inicio'].date() if isinstance(s['fecha_inicio'], datetime) else datetime.strptime(s['fecha_inicio'][:10], "%Y-%m-%d").date(),
-            s['fecha_fin'].date() if isinstance(s['fecha_fin'], datetime) else datetime.strptime(s['fecha_fin'][:10], "%Y-%m-%d").date() if s.get('fecha_fin') else None,
+            _as_date(s['fecha_inicio']),
+            _as_date(s['fecha_fin']) if s.get('fecha_fin') else None,
             month
         ))
         
         main_fixed = sum((fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe['monto']) for fe in fixed_all if fe.get('account_id') == main_id and fe['estado'] == 'pagado')
-        main_expenses = sum(e['monto'] for e in expenses if e.get('account_id') == main_id and (e['fecha'].date() if isinstance(e['fecha'], datetime) else datetime.strptime(e['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month)
+        main_expenses = sum(e['monto'] for e in expenses if e.get('account_id') == main_id and _month_of(e['fecha']) == month)
         
-        main_base_incomes = sum(i['monto'] for i in incomes if i.get('account_id') == main_id and (i['fecha'].date() if isinstance(i['fecha'], datetime) else datetime.strptime(i['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month)
-        main_loans = get_pending_loans_for_account(main_id, month)
+        main_base_incomes = sum(i['monto'] for i in incomes if i.get('account_id') == main_id and _month_of(i['fecha']) == month)
+        main_loans = [
+            t for t in transfers
+            if t.get('cuenta_destino') == main_id and t.get('is_loan', False) and t.get('status', 'pending') == 'pending'
+            and t.get('outstanding_amount', t.get('monto', 0.0)) > 0 and _month_of(t['fecha']) == month
+        ]
         main_loans_total = sum(l.get('outstanding_amount', l.get('monto', 0.0)) for l in main_loans)
         
         main_extra_incomes = main_base_incomes + main_loans_total
         main_transfers_out = sum(
             t['monto'] for t in transfers
             if t.get('cuenta_origen') == main_id and
-            (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+            _month_of(t['fecha']) == month
         )
         main_transfers_in = sum(
             t['monto'] for t in transfers
             if t.get('cuenta_destino') == main_id and
-            (t['fecha'].date() if isinstance(t['fecha'], datetime) else datetime.strptime(t['fecha'][:10], "%Y-%m-%d").date()).strftime("%Y-%m") == month
+            _month_of(t['fecha']) == month
         )
         
         # SIEMPRE recalcula para asegurar que incluye transferencias
