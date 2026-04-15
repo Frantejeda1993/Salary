@@ -1,18 +1,38 @@
 import streamlit as st
 import pandas as pd
-from services.finance_engine import (
-    get_month_summary,
-    calculate_real_balance,
-    calculate_projected_balance,
-    calculate_month_real_result,
-    calculate_month_projected_result,
-    get_active_budgets,
-    calculate_category_spending,
-    get_fixed_expenses_for_month,
-)
+from services import finance_engine
 from utils.date_utils import get_current_month, get_month_options
 from services.firestore_service import FirestoreService, clear_firestore_read_caches
 from utils.money_utils import format_currency
+
+
+# Backward-compatible function bindings.
+# Some deployments may have an older `finance_engine` module that still exports
+# `calculate_real_result` / `calculate_projected_result` instead of the
+# month-scoped names. Falling back prevents import-time crashes.
+get_month_summary = finance_engine.get_month_summary
+calculate_real_balance = finance_engine.calculate_real_balance
+calculate_projected_balance = finance_engine.calculate_projected_balance
+get_active_budgets = finance_engine.get_active_budgets
+calculate_category_spending = finance_engine.calculate_category_spending
+get_fixed_expenses_for_month = finance_engine.get_fixed_expenses_for_month
+calculate_month_real_result = getattr(
+    finance_engine,
+    "calculate_month_real_result",
+    getattr(finance_engine, "calculate_real_result", None),
+)
+calculate_month_projected_result = getattr(
+    finance_engine,
+    "calculate_month_projected_result",
+    getattr(finance_engine, "calculate_projected_result", None),
+)
+
+if calculate_month_real_result is None or calculate_month_projected_result is None:
+    raise ImportError(
+        "Missing month result calculators in services.finance_engine. "
+        "Expected calculate_month_real_result and calculate_month_projected_result "
+        "(or legacy calculate_real_result / calculate_projected_result)."
+    )
 
 st.title("📅 Monthly View Breakdown")
 refresh_col, _ = st.columns([1, 5])
