@@ -396,11 +396,12 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
     if prev_month < MIN_MANAGED_MONTH:
         return 0.0
 
-    return calculate_month_projected_result(
+    prev_month_proj = calculate_month_projected_result(
         main_account_id,
         prev_month,
         absorb_deficit_with_budgets=True,
-    )["resultado"]
+    )
+    return prev_month_proj["resultado"] + get_remaining_from_previous_month(prev_month, main_account_id)
 
 
 # ---------------------------------------------------------------------------
