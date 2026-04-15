@@ -18,11 +18,7 @@ calculate_projected_balance = finance_engine.calculate_projected_balance
 get_active_budgets = finance_engine.get_active_budgets
 calculate_category_spending = finance_engine.calculate_category_spending
 get_fixed_expenses_for_month = finance_engine.get_fixed_expenses_for_month
-get_personal_expenses_by_account = getattr(
-    finance_engine,
-    "get_personal_expenses_by_account",
-    lambda *args, **kwargs: {},
-)
+get_personal_expenses_by_account = finance_engine.get_personal_expenses_by_account
 calculate_month_real_result = getattr(
     finance_engine,
     "calculate_month_real_result",
