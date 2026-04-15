@@ -1,11 +1,9 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
 from services import finance_engine
 from utils.date_utils import get_current_month, get_month_options
 from services.firestore_service import FirestoreService, clear_firestore_read_caches
 from utils.money_utils import format_currency
-from models.transfer import Transfer
 
 
 # Backward-compatible function bindings.
@@ -18,7 +16,6 @@ calculate_projected_balance = finance_engine.calculate_projected_balance
 get_active_budgets = finance_engine.get_active_budgets
 calculate_category_spending = finance_engine.calculate_category_spending
 get_fixed_expenses_for_month = finance_engine.get_fixed_expenses_for_month
-get_personal_expenses_by_account = finance_engine.get_personal_expenses_by_account
 calculate_month_real_result = getattr(
     finance_engine,
     "calculate_month_real_result",
@@ -46,7 +43,6 @@ with refresh_col:
 
 acc_srv = FirestoreService("accounts")
 bank_srv = FirestoreService("banks")
-trf_srv = FirestoreService("transfers")
 accounts = acc_srv.get_all()
 banks = bank_srv.get_all()
 bank_lookup = {b['id']: b['nombre'] for b in banks}
@@ -115,54 +111,9 @@ with rc2:
         main_id = res_details['main_account_id']
         main_name = res_details['main_account_name']
         remaining_from_previous_month = summary.get('remaining_from_previous_month', 0.0)
-        proj_result = calculate_month_projected_result(
-            main_id,
-            selected_month,
-            absorb_deficit_with_budgets=True,
-        )
+        proj_result = calculate_month_projected_result(main_id, selected_month)
         main_proj = proj_result['resultado'] + remaining_from_previous_month
         st.success(f"### Resultado Proyectado ({main_name})\n# {format_currency(main_proj)}")
-
-        personal_expenses_by_account = get_personal_expenses_by_account(
-            selected_month,
-            exclude_account_id=main_id,
-        )
-        if personal_expenses_by_account:
-            account_lookup = {a["id"]: a for a in accounts}
-            positive_personal = {
-                acc_id: amount
-                for acc_id, amount in personal_expenses_by_account.items()
-                if amount > 0
-            }
-            if positive_personal:
-                total_personal = sum(positive_personal.values())
-                detail_text = ", ".join(
-                    f"{account_lookup.get(acc_id, {}).get('nombre', 'Cuenta eliminada')}: {format_currency(amount)}"
-                    for acc_id, amount in positive_personal.items()
-                )
-                st.caption(
-                    "Gastos propios fuera de Main: "
-                    f"{format_currency(total_personal)} ({detail_text})"
-                )
-                if st.button(
-                    "Transferir gastos propios desde Main",
-                    key=f"transfer_personal_{selected_month}",
-                    use_container_width=True,
-                ):
-                    created = 0
-                    for acc_id, amount in positive_personal.items():
-                        transfer = Transfer(
-                            fecha=date.today(),
-                            cuenta_origen=main_id,
-                            cuenta_destino=acc_id,
-                            monto=amount,
-                            is_loan=False,
-                            status='paid',
-                        )
-                        trf_srv.add(transfer.to_dict())
-                        created += 1
-                    st.success(f"Se registraron {created} transferencias de gastos propios.")
-                    st.rerun()
     else:
         st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")
 
@@ -178,11 +129,7 @@ if active_budgets:
     # Get per-account projected budget availability
     account_budget_details = {}
     for a in accounts:
-        proj_result = calculate_month_projected_result(
-            a['id'],
-            selected_month,
-            absorb_deficit_with_budgets=bool(a.get("is_main", False)),
-        )
+        proj_result = calculate_month_projected_result(a['id'], selected_month)
         account_budget_details[a['id']] = {
             bd['categoria_id']: bd['available'] for bd in proj_result['budget_details']
         }
