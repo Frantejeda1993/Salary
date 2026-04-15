@@ -215,46 +215,8 @@ def calculate_month_real_result(account_id: str, month: str) -> float:
     return salary_total + income_total + transfers_in - expense_total - fixed_paid - transfers_out
 
 
-def _consume_budget_availability_for_deficit(
-    projected_result: float,
-    budget_details: list[dict],
-) -> tuple[float, list[dict], float]:
-    """
-    Reduces budget availability against a negative projected result.
-
-    Strategy:
-      1) Pick the budget with the highest positive availability.
-      2) Consume as much as needed to cover the deficit.
-      3) Repeat while there is deficit and available budgets.
-    """
-    resultado = projected_result
-    if resultado >= 0:
-        return resultado, budget_details, 0.0
-
-    deficit = abs(resultado)
-    consumed_total = 0.0
-    details = [dict(bd) for bd in budget_details]
-
-    while deficit > 0:
-        candidates = [bd for bd in details if bd.get("available", 0.0) > 0]
-        if not candidates:
-            break
-        target = max(candidates, key=lambda bd: bd.get("available", 0.0))
-        available = target.get("available", 0.0)
-        to_consume = min(deficit, available)
-        target["available"] = available - to_consume
-        deficit -= to_consume
-        consumed_total += to_consume
-
-    return -deficit if deficit > 0 else 0.0, details, consumed_total
-
-
 @st.cache_data(ttl=120, show_spinner=False)
-def calculate_month_projected_result(
-    account_id: str,
-    month: str,
-    absorb_deficit_with_budgets: bool = False,
-) -> dict:
+def calculate_month_projected_result(account_id: str, month: str) -> dict:
     """
     Projected result for a specific account and month.
 
@@ -345,36 +307,7 @@ def calculate_month_projected_result(
         - transfers_out
     )
 
-    budget_consumed_for_deficit = 0.0
-    if absorb_deficit_with_budgets:
-        resultado, budget_details, budget_consumed_for_deficit = (
-            _consume_budget_availability_for_deficit(resultado, budget_details)
-        )
-
-    return {
-        "resultado": resultado,
-        "budget_details": budget_details,
-        "budget_consumed_for_deficit": budget_consumed_for_deficit,
-    }
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def get_personal_expenses_by_account(month: str, exclude_account_id: str = None) -> dict:
-    """
-    Returns personal expense totals in `month` grouped by account_id.
-    """
-    data = load_all_data()
-    totals = {}
-    for exp in data["expenses"]:
-        if _month_of(exp["fecha"]) != month:
-            continue
-        if not exp.get("is_personal", False):
-            continue
-        acc_id = exp.get("account_id")
-        if not acc_id or (exclude_account_id and acc_id == exclude_account_id):
-            continue
-        totals[acc_id] = totals.get(acc_id, 0.0) + exp.get("monto", 0.0)
-    return totals
+    return {"resultado": resultado, "budget_details": budget_details}
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +319,8 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
     """
     Result carried over from the previous month into `month`.
 
-    - Uses previous month projected result as the carry-over baseline.
+    - Previous month already passed  → use calculate_month_real_result
+    - Previous month is current/future → use calculate_month_projected_result
     - Previous month is before MIN_MANAGED_MONTH → 0.0
     """
     if month <= MIN_MANAGED_MONTH:
@@ -396,12 +330,11 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
     if prev_month < MIN_MANAGED_MONTH:
         return 0.0
 
-    prev_month_proj = calculate_month_projected_result(
-        main_account_id,
-        prev_month,
-        absorb_deficit_with_budgets=True,
-    )
-    return prev_month_proj["resultado"] + get_remaining_from_previous_month(prev_month, main_account_id)
+    current_month = get_current_month()
+    if prev_month < current_month:
+        return calculate_month_real_result(main_account_id, prev_month)
+    else:
+        return calculate_month_projected_result(main_account_id, prev_month)["resultado"]
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +506,7 @@ def get_month_summary(month: str) -> dict:
             calculate_month_real_result(main_id, month)
             + remaining_from_previous_month
         )
-        proj = calculate_month_projected_result(main_id, month, absorb_deficit_with_budgets=True)
+        proj = calculate_month_projected_result(main_id, month)
         resultado_proyectado = proj["resultado"] + remaining_from_previous_month
 
         resultado_real_details = {
