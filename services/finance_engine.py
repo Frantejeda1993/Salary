@@ -250,7 +250,7 @@ def run_month_rollover_if_needed(today=None) -> dict:
     if previous_main:
         previous_account_id = previous_main["id"]
         previous_snapshot = get_monthly_account_snapshot(previous_month, previous_account_id)
-        previous_remaining = float(previous_snapshot.get("remaining_from_previous_month", 0.0)) if previous_snapshot else 0.0
+        previous_remaining = get_remaining_from_previous_month(previous_month, previous_account_id)
 
         if previous_snapshot and previous_snapshot.get("status") == "closed":
             closed_result = float(previous_snapshot.get("resultado_real_closed", 0.0))
