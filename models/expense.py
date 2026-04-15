@@ -10,7 +10,6 @@ class Expense:
     categoria_id: str
     bank_id: str
     account_id: str
-    is_personal: bool = False
     id: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
 
@@ -22,7 +21,6 @@ class Expense:
             "categoria_id": self.categoria_id,
             "bank_id": self.bank_id,
             "account_id": self.account_id,
-            "is_personal": self.is_personal,
             "created_at": self.created_at
         }
 
@@ -40,6 +38,5 @@ class Expense:
             categoria_id=data.get('categoria_id', ''),
             bank_id=data.get('bank_id', ''),
             account_id=data.get('account_id', ''),
-            is_personal=data.get('is_personal', False),
             created_at=data.get('created_at', datetime.now())
         )
