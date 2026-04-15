@@ -80,6 +80,7 @@ else:
                 fecha = st.date_input("Date", value=date.today(), format="DD/MM/YYYY")
                 categoria_label = st.selectbox("Category", cat_labels if cat_labels else ["None"])
                 selected_cat = next((c for c in cat_options if c['label'] == categoria_label), None)
+                is_personal = st.checkbox("Propio", value=False, help="Marca este gasto como propio.")
                 
             if st.form_submit_button("Save Expense"):
                 if monto is None:
@@ -92,7 +93,8 @@ else:
                     new_exp = Expense(
                     nombre=nombre, fecha=fecha, monto=monto,
                     categoria_id=selected_cat['id'] if selected_cat else '',
-                    bank_id=selected_acc['bank_id'], account_id=selected_acc['id']
+                    bank_id=selected_acc['bank_id'], account_id=selected_acc['id'],
+                    is_personal=is_personal,
                 )
                     exp_srv.add(new_exp.to_dict())
                     st.success("Expense logged.")
@@ -238,6 +240,11 @@ def edit_expense_dialog(exp, acc_op, cat_op):
                 cat_index = 0 if "None" in cat_names else -1
             
             categoria_nombre = st.selectbox("Category", cat_names, index=max(0, cat_index))
+            is_personal = st.checkbox(
+                "Propio",
+                value=bool(exp.get("is_personal", False)),
+                help="Marca este gasto como propio.",
+            )
             
         is_fuel = exp.get("fuel_expense", False)
         if is_fuel:
@@ -261,7 +268,8 @@ def edit_expense_dialog(exp, acc_op, cat_op):
                 update_payload = {
                     "nombre": nombre, "fecha": datetime.combine(fecha, datetime.min.time()) if fecha else None, "monto": monto,
                     "categoria_id": next((c['id'] for c in cat_op if c['label'] == categoria_nombre), ''),
-                    "bank_id": selected_acc['bank_id'], "account_id": selected_acc['id']
+                    "bank_id": selected_acc['bank_id'], "account_id": selected_acc['id'],
+                    "is_personal": is_personal,
                 }
                 
                 if is_fuel:
@@ -392,7 +400,8 @@ for tx in filtered_tx[:50]:  # Limit to 50
     
     c1.markdown(f":{color}[{display_type}]")
     fecha_str = str(tx.get('fecha'))[:10]
-    c2.write(f"**{tx.get('nombre')}**\n\n{fecha_str}")
+    personal_badge = "\n\n🧍 Propio" if (not is_inc and tx.get("is_personal", False)) else ""
+    c2.write(f"**{tx.get('nombre')}**\n\n{fecha_str}{personal_badge}")
     
     acc_name_str = acc_lookup.get(tx.get('account_id'), 'Unknown')
     cat_name_str = cat_lookup.get(tx.get('categoria_id'), 'No Category')
