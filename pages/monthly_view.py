@@ -1,6 +1,16 @@
 import streamlit as st
 import pandas as pd
-from services.finance_engine import get_month_summary, calculate_real_balance, calculate_projected_balance, get_active_budgets, calculate_category_spending, get_fixed_expenses_for_month, run_month_rollover_if_needed
+from services.finance_engine import (
+    get_month_summary,
+    calculate_real_balance,
+    calculate_projected_balance,
+    calculate_month_real_result,
+    calculate_month_projected_result,
+    get_remaining_from_previous_month,
+    get_active_budgets,
+    calculate_category_spending,
+    get_fixed_expenses_for_month,
+)
 from utils.date_utils import get_current_month, get_month_options
 from services.firestore_service import FirestoreService, clear_firestore_read_caches
 from utils.money_utils import format_currency
@@ -22,14 +32,12 @@ months = get_month_options()
 if 'sel_month' not in st.session_state:
     st.session_state['sel_month'] = get_current_month()
 
-selected_month = st.selectbox("Select Month", months, index=months.index(st.session_state['sel_month']) if st.session_state['sel_month'] in months else 0)
+selected_month = st.selectbox(
+    "Select Month",
+    months,
+    index=months.index(st.session_state['sel_month']) if st.session_state['sel_month'] in months else 0,
+)
 st.session_state['sel_month'] = selected_month
-
-rollover_key = f"monthly_view_rollover_done_{get_current_month()}"
-if rollover_key not in st.session_state:
-    run_month_rollover_if_needed()
-    clear_firestore_read_caches()
-    st.session_state[rollover_key] = True
 
 st.divider()
 st.subheader(f"Summary for {selected_month}")
@@ -45,33 +53,43 @@ col4.metric("Gastos Fijos", format_currency(summary['gastos_fijos']))
 st.metric("Total Presupuestado", format_currency(summary['presupuestos']))
 st.metric(
     "Remaining from Previous Month",
-    format_currency(summary.get('remaining_from_previous_month', 0.0))
+    format_currency(summary.get('remaining_from_previous_month', 0.0)),
 )
 
 st.divider()
 rc1, rc2 = st.columns(2)
+
+res_details = summary.get('resultado_real_details')
+
 with rc1:
-    res_details = summary.get('resultado_real_details')
     if res_details:
         main_id = res_details['main_account_id']
-        main_real = calculate_real_balance(main_id, selected_month)
-        st.info(f"### Resultado Real ({res_details['main_account_name']})\n# {format_currency(main_real)}")
+        main_name = res_details['main_account_name']
+        main_real = calculate_month_real_result(main_id, selected_month)
+        st.info(f"### Resultado Real ({main_name})\n# {format_currency(main_real)}")
         pending_loans = res_details.get('pending_loans', [])
         if pending_loans:
-            for l in pending_loans:
-                acc_origen = acc_srv.get_by_id(l['cuenta_origen'])
+            for loan in pending_loans:
+                acc_origen = acc_srv.get_by_id(loan['cuenta_origen'])
                 acc_origen_name = acc_origen.get('nombre', 'Unknown Account') if acc_origen else 'Unknown Account'
-                loan_fecha = str(l.get('fecha'))[:10]
-                pending_amount = l.get('outstanding_amount', l.get('monto', 0.0))
-                st.markdown(f"<small style='color:#ff4b4b; font-weight:bold;'>- Pending Loan: {format_currency(pending_amount)} from {acc_origen_name} (since {loan_fecha})</small>", unsafe_allow_html=True)
+                loan_fecha = str(loan.get('fecha'))[:10]
+                pending_amount = loan.get('outstanding_amount', loan.get('monto', 0.0))
+                st.markdown(
+                    f"<small style='color:#ff4b4b; font-weight:bold;'>"
+                    f"- Pending Loan: {format_currency(pending_amount)} from {acc_origen_name} (since {loan_fecha})"
+                    f"</small>",
+                    unsafe_allow_html=True,
+                )
     else:
         st.info(f"### Resultado Real\n# {format_currency(summary['resultado_real'])}")
+
 with rc2:
     if res_details:
         main_id = res_details['main_account_id']
-        proj_result = calculate_projected_balance(main_id, selected_month)
+        main_name = res_details['main_account_name']
+        proj_result = calculate_month_projected_result(main_id, selected_month)
         main_proj = proj_result['resultado']
-        st.success(f"### Resultado Proyectado ({res_details['main_account_name']})\n# {format_currency(main_proj)}")
+        st.success(f"### Resultado Proyectado ({main_name})\n# {format_currency(main_proj)}")
     else:
         st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")
 
@@ -84,12 +102,14 @@ if active_budgets:
     cat_srv = FirestoreService("categories")
     categories = {c['id']: c['nombre'] for c in cat_srv.get_all()}
 
-    # Obtener los detalles de presupuestos con disponibilidad actualizada para cada cuenta
+    # Get per-account projected budget availability
     account_budget_details = {}
     for a in accounts:
-        proj_result = calculate_projected_balance(a['id'], selected_month)
-        account_budget_details[a['id']] = {bd['categoria_id']: bd['available'] for bd in proj_result['budget_details']}
-    
+        proj_result = calculate_month_projected_result(a['id'], selected_month)
+        account_budget_details[a['id']] = {
+            bd['categoria_id']: bd['available'] for bd in proj_result['budget_details']
+        }
+
     for b in active_budgets:
         cat_name = categories.get(b.get('categoria_id'), 'Unknown Category')
         acc = acc_srv.get_by_id(b.get('account_id')) if b.get('account_id') else None
@@ -97,32 +117,31 @@ if active_budgets:
             acc_name = f"{bank_lookup.get(acc.get('bank_id'), 'Banco desconocido')} - {acc.get('nombre', 'Cuenta')}"
         else:
             acc_name = "Cuenta eliminada" if b.get('account_id') else ''
-        
+
         limit = b.get('monto', 0.0)
         used = spending.get(b.get('categoria_id'), 0.0)
 
-        # Obtener el available actualizado considerando la distribución del déficit
         account_id = b.get('account_id')
-        if account_id in account_budget_details and b.get('categoria_id') in account_budget_details[account_id]:
-            available = account_budget_details[account_id][b.get('categoria_id')]
+        cat_id = b.get('categoria_id')
+        if account_id in account_budget_details and cat_id in account_budget_details[account_id]:
+            available = account_budget_details[account_id][cat_id]
         else:
             available = limit - used
-        
+
         pct_used = min(used / limit if limit > 0 else 0, 1.0)
-        
+
         st.write(f"**{cat_name}** {f'({acc_name})' if acc_name else ''}")
         c1, c2, c3 = st.columns(3)
         c1.metric("Limit", format_currency(limit))
         c2.metric("Used", format_currency(used))
-        
-        # Color the available depending on if it's negative or positive
+
         if available < 0:
             c3.metric("Available", format_currency(available), delta=format_currency(available), delta_color="inverse")
         else:
             c3.metric("Available", format_currency(available), delta=format_currency(available), delta_color="normal")
-            
+
         st.progress(pct_used)
-        st.write("") # spacing
+        st.write("")
 else:
     st.info("No active budgets for this month.")
 
@@ -147,10 +166,10 @@ if fixed_expenses:
         amount = fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe.get('monto', 0.0)
 
         fixed_rows.append({
-            "Expense": fe.get('nombre', 'Unnamed fixed expense'),
+            "Expense": fe.get('nombre', 'Unnamed'),
             "Status": estado_badge,
             "Amount": format_currency(amount),
-            "Debit Account": debit_account
+            "Debit Account": debit_account,
         })
 
     st.dataframe(pd.DataFrame(fixed_rows), use_container_width=True, hide_index=True)
@@ -167,44 +186,43 @@ st.divider()
 st.subheader("Balances per Account")
 
 if accounts:
-    bank_groups = {}
+    bank_groups: dict = {}
     for a in accounts:
         bank_name = bank_lookup.get(a.get('bank_id'), 'Unknown')
-        if bank_name not in bank_groups:
-            bank_groups[bank_name] = []
-        bank_groups[bank_name].append(a)
+        bank_groups.setdefault(bank_name, []).append(a)
 
     acc_data = []
     for bank_name, bank_accounts in bank_groups.items():
         subtotal_real = 0.0
         subtotal_proj = 0.0
-        
+
         for a in bank_accounts:
-            acc_name = a.get('nombre')
             real_bal = calculate_real_balance(a['id'], selected_month)
             proj_bal = calculate_projected_balance(a['id'], selected_month)['resultado']
-            
             subtotal_real += real_bal
             subtotal_proj += proj_bal
-            
+
             acc_data.append({
                 "Banco": bank_name,
-                "Cuenta": acc_name,
+                "Cuenta": a.get('nombre'),
                 "Saldo Real (Current)": format_currency(real_bal),
-                "Saldo Proyectado": format_currency(proj_bal)
+                "Saldo Proyectado": format_currency(proj_bal),
             })
-            
+
         acc_data.append({
             "Banco": f"TOTAL {bank_name}",
             "Cuenta": "---",
             "Saldo Real (Current)": format_currency(subtotal_real),
-            "Saldo Proyectado": format_currency(subtotal_proj)
+            "Saldo Proyectado": format_currency(subtotal_proj),
         })
-        
+
     df = pd.DataFrame(acc_data)
-    
+
     def highlight_subtotal(row):
-        return ['background-color: rgba(255, 255, 255, 0.1); font-weight: bold;' if 'TOTAL' in row['Banco'] else '' for _ in row]
+        return [
+            'background-color: rgba(255,255,255,0.1); font-weight: bold;' if 'TOTAL' in row['Banco'] else ''
+            for _ in row
+        ]
 
     st.dataframe(df.style.apply(highlight_subtotal, axis=1), use_container_width=True, hide_index=True)
 else:
