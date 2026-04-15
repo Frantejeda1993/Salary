@@ -6,7 +6,6 @@ from services.finance_engine import (
     calculate_projected_balance,
     calculate_month_real_result,
     calculate_month_projected_result,
-    get_remaining_from_previous_month,
     get_active_budgets,
     calculate_category_spending,
     get_fixed_expenses_for_month,
@@ -65,7 +64,11 @@ with rc1:
     if res_details:
         main_id = res_details['main_account_id']
         main_name = res_details['main_account_name']
-        main_real = calculate_month_real_result(main_id, selected_month)
+        remaining_from_previous_month = summary.get('remaining_from_previous_month', 0.0)
+        main_real = (
+            calculate_month_real_result(main_id, selected_month)
+            + remaining_from_previous_month
+        )
         st.info(f"### Resultado Real ({main_name})\n# {format_currency(main_real)}")
         pending_loans = res_details.get('pending_loans', [])
         if pending_loans:
@@ -87,8 +90,9 @@ with rc2:
     if res_details:
         main_id = res_details['main_account_id']
         main_name = res_details['main_account_name']
+        remaining_from_previous_month = summary.get('remaining_from_previous_month', 0.0)
         proj_result = calculate_month_projected_result(main_id, selected_month)
-        main_proj = proj_result['resultado']
+        main_proj = proj_result['resultado'] + remaining_from_previous_month
         st.success(f"### Resultado Proyectado ({main_name})\n# {format_currency(main_proj)}")
     else:
         st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")

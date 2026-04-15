@@ -502,9 +502,12 @@ def get_month_summary(month: str) -> dict:
     if main_acc:
         main_id = main_acc['id']
         remaining_from_previous_month = get_remaining_from_previous_month(month, main_id)
-        resultado_real = calculate_month_real_result(main_id, month)
+        resultado_real = (
+            calculate_month_real_result(main_id, month)
+            + remaining_from_previous_month
+        )
         proj = calculate_month_projected_result(main_id, month)
-        resultado_proyectado = proj["resultado"]
+        resultado_proyectado = proj["resultado"] + remaining_from_previous_month
 
         resultado_real_details = {
             "main_account_id": main_id,
