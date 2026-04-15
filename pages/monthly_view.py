@@ -21,7 +21,7 @@ get_fixed_expenses_for_month = finance_engine.get_fixed_expenses_for_month
 get_personal_expenses_by_account = getattr(
     finance_engine,
     "get_personal_expenses_by_account",
-    lambda month, exclude_account_id=None: {},
+    lambda *args, **kwargs: {},
 )
 calculate_month_real_result = getattr(
     finance_engine,
