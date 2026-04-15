@@ -6,7 +6,7 @@ from utils.date_utils import is_active_in_month, get_current_month, parse_month
 from services.firestore_service import FirestoreService
 from services.data_cache import load_all_data
 
-MIN_MANAGED_MONTH = "2026-03"  # Months before this return 0 for remaining
+MIN_MANAGED_MONTH = "2026-02"  # Months before this return 0 for remaining
 
 
 def _get_service(collection_name):
