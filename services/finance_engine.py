@@ -71,6 +71,33 @@ def _get_previous_month(month: str) -> str:
     return (parse_month(month) - relativedelta(months=1)).strftime("%Y-%m")
 
 
+MIN_MANAGED_MONTH = "2026-04"  # March and before = 0
+
+
+def get_remaining_from_previous_month(month: str, main_account_id: str) -> float:
+    """
+    Returns the carry-over balance from the previous month into `month`.
+
+    Rules:
+    - If month <= MIN_MANAGED_MONTH: return 0.0
+    - If previous month is closed: return resultado_real_closed from snapshot
+    - If previous month is open: return calculate_projected_balance() for that month
+    """
+    if month <= MIN_MANAGED_MONTH:
+        return 0.0
+
+    previous_month = _get_previous_month(month)
+    if previous_month < MIN_MANAGED_MONTH:
+        return 0.0
+
+    previous_snapshot = get_monthly_account_snapshot(previous_month, main_account_id)
+    if previous_snapshot and previous_snapshot.get("status") == "closed":
+        return float(previous_snapshot.get("resultado_real_closed", 0.0))
+
+    proj = calculate_projected_balance(main_account_id, previous_month)
+    return float(proj["resultado"])
+
+
 def _get_snapshot_effective_result(snapshot: Optional[dict]) -> Optional[float]:
     if not snapshot:
         return None
@@ -603,23 +630,7 @@ def get_month_summary(month: str) -> dict:
     if main_acc:
         main_id = main_acc['id']
         month_snapshot = main_acc.get("snapshot") or get_monthly_account_snapshot(month, main_id)
-        if month_snapshot and month == current_month and month_snapshot.get("status") == "future_projection":
-            month_snapshot = upsert_monthly_account_snapshot(month, main_id, {
-                "is_main_account_for_month": True,
-                "remaining_from_previous_month": float(month_snapshot.get("remaining_from_previous_month", 0.0)),
-                "resultado_real_closed": float(month_snapshot.get("resultado_real_closed", 0.0)),
-                "resultado_proyectado_frozen": float(month_snapshot.get("resultado_proyectado_frozen", 0.0)),
-                "status": "open",
-            })
-        # CORRECCIÓN: Obtener remaining_from_previous_month del mes anterior
-        previous_month = _get_previous_month(month)
-        if month >= "2026-03" and previous_month >= "2026-03":
-            previous_snapshot = get_monthly_account_snapshot(previous_month, main_id)
-            if previous_snapshot:
-                if previous_snapshot.get("status") == "closed":
-                    remaining_from_previous_month = float(previous_snapshot.get("resultado_real_closed", 0.0))
-                else:
-                    remaining_from_previous_month = float(previous_snapshot.get("remaining_from_previous_month", 0.0))
+        remaining_from_previous_month = get_remaining_from_previous_month(month, main_id)
 
         main_salaries = sum(calculate_salary_net(s['id'], month) for s in salaries if s.get('account_id') == main_id and is_active_in_month(
             _as_date(s['fecha_inicio']),
