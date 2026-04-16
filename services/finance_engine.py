@@ -147,8 +147,30 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
     return pending
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def get_propio_expenses_by_account(month: str, main_account_id: str) -> dict:
+    """
+    Returns the sum of 'propio' expenses (es_propio=True) for each non-main account
+    in the given month. Used to identify expenses from other accounts that should be
+    reimbursed from the main account.
+
+    Returns: dict mapping account_id -> total propio amount
+    """
+    data = load_all_data()
+    result = {}
+    for e in data["expenses"]:
+        if not e.get("es_propio", False):
+            continue
+        if _month_of(e["fecha"]) != month:
+            continue
+        acc_id = e.get("account_id")
+        if acc_id and acc_id != main_account_id:
+            result[acc_id] = result.get(acc_id, 0.0) + e.get("monto", 0.0)
+    return result
+
+
 # ---------------------------------------------------------------------------
-# Month-scoped result calculations (NEW – replaces old cumulative logic)
+# Month-scoped result calculations
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -229,6 +251,10 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
       - For non-budgeted categories: actual spent (positive only)
       - transfers sent
 
+    If resultado < 0 and there are budgets with available > 0, the deficit is
+    absorbed into the budget with the most available capacity (shows projected = 0
+    with that budget reduced). If no positive budgets exist, projected stays negative.
+
     Returns:
         dict with 'resultado' (float) and 'budget_details' (list).
     """
@@ -306,6 +332,19 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
         - non_budgeted
         - transfers_out
     )
+
+    # If projected result is negative but there are budgets with available capacity,
+    # absorb the deficit into the budget with the most available (show projected = 0).
+    # If no positive budgets exist, resultado stays negative.
+    if resultado < 0:
+        positive_budgets = [bd for bd in budget_details if bd['available'] > 0]
+        if positive_budgets:
+            largest = max(positive_budgets, key=lambda x: x['available'])
+            for bd in budget_details:
+                if bd['budget_id'] == largest['budget_id']:
+                    bd['available'] += resultado  # resultado is negative → reduces available
+                    break
+            resultado = 0.0
 
     return {"resultado": resultado, "budget_details": budget_details}
 
