@@ -338,15 +338,14 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
     # If no positive budgets exist, resultado stays negative.
     if resultado < 0:
         positive_budgets = [bd for bd in budget_details if bd['available'] > 0]
-        if positive_budgets:
-            largest = max(positive_budgets, key=lambda x: x['available'])
-            for bd in budget_details:
-                if bd['budget_id'] == largest['budget_id']:
-                    bd['available'] += resultado  # resultado is negative → reduces available
-                    break
-            resultado = 0.0
-
-    return {"resultado": resultado, "budget_details": budget_details}
+        total_available = sum(bd['available'] for bd in positive_budgets)
+        deficit = abs(resultado)
+        if total_available > 0:
+            absorption = min(deficit, total_available)
+            for bd in positive_budgets:
+                proportion = bd['available'] / total_available
+                bd['available'] -= absorption * proportion
+            resultado = -(deficit - absorption)  # 0.0 if fully covered, negative if not
 
 
 # ---------------------------------------------------------------------------
