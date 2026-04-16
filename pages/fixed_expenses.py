@@ -52,6 +52,7 @@ with st.expander("Add New Fixed Expense", expanded=False):
                 has_end_date = st.checkbox("Has End Date?", value=False)
                 fecha_fin = st.date_input("End Date", value=date.today(), format="DD/MM/YYYY") if has_end_date else None
             
+            es_propio = st.checkbox("Gasto Propio", value=False, help="Este gasto fijo pertenece a esta cuenta pero debe ser reembolsado desde la cuenta principal.")
             submitted = st.form_submit_button("Save Fixed Expense")
             
             if submitted and nombre:
@@ -59,13 +60,14 @@ with st.expander("Add New Fixed Expense", expanded=False):
                     st.error("Please select a valid account.")
                 else:
                     new_fe = FixedExpense(
-                    nombre=nombre,
-                    monto=monto,
-                    fecha_inicio=fecha_inicio,
-                    fecha_fin=fecha_fin,
-                    bank_id=selected_acc['bank_id'],
-                    account_id=selected_acc['id']
-                )
+                        nombre=nombre,
+                        monto=monto,
+                        fecha_inicio=fecha_inicio,
+                        fecha_fin=fecha_fin,
+                        bank_id=selected_acc['bank_id'],
+                        account_id=selected_acc['id'],
+                        es_propio=es_propio
+                    )
                     fe_srv.add(new_fe.to_dict())
                     st.success("Fixed Expense added successfully!")
                     st.rerun()
@@ -169,6 +171,7 @@ def edit_fe_dialog(fe, acc_options):
             has_end_date = st.checkbox("Has End Date?", value=current_end is not None, key=f"he_{fe['id']}")
             fecha_fin = st.date_input("End Date", value=current_end if current_end else date.today(), format="DD/MM/YYYY") if has_end_date else None
         
+        ses_propio = st.checkbox("Gasto Propio", value=fe.get("es_propio", False), key=f"propio_{fe['id']}", help="Este gasto fijo pertenece a esta cuenta pero debe ser reembolsado desde la cuenta principal.")
         submitted = st.form_submit_button("Update Fixed Expense")
         
         if submitted:
@@ -182,7 +185,8 @@ def edit_fe_dialog(fe, acc_options):
                     "fecha_inicio": datetime.combine(fecha_inicio, datetime.min.time()) if fecha_inicio else None,
                     "fecha_fin": datetime.combine(fecha_fin, datetime.min.time()) if fecha_fin else None,
                     "bank_id": selected_acc['bank_id'],
-                    "account_id": selected_acc['id']
+                    "account_id": selected_acc['id'],
+                    "es_propio": es_propio
                 })
                 st.success("Fixed Expense updated successfully!")
                 st.rerun()
