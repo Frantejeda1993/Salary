@@ -86,9 +86,28 @@ def _clear_firestore_caches():
     _cached_get_by_field.clear()
     _cached_get_by_fields.clear()
     _cached_get_by_id.clear()
-    # Also clear the aggregated data loader cache.
+    # Clear the aggregated data loader cache
     from services.data_cache import clear_data_cache
     clear_data_cache()
+    # Clear finance engine caches — these depend on the data above and must also be invalidated
+    # when Firestore data changes (fixes stale cache after writes like toggling fixed expenses)
+    try:
+        import services.finance_engine as fe
+        fe.calculate_salary_net.clear()
+        fe.get_active_budgets.clear()
+        fe.get_fixed_expenses_for_month.clear()
+        fe.calculate_category_spending.clear()
+        fe.get_pending_loans_for_account.clear()
+        fe.calculate_month_real_result.clear()
+        fe.calculate_month_projected_result.clear()
+        fe.get_remaining_from_previous_month.clear()
+        fe._get_account_historical_salary_incomes.clear()
+        fe.calculate_real_balance.clear()
+        fe.calculate_projected_balance.clear()
+        fe.get_month_summary.clear()
+        fe.get_propio_expenses_by_account.clear()
+    except Exception:
+        pass
 
 
 def clear_firestore_read_caches():
