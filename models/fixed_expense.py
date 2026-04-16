@@ -10,6 +10,7 @@ class FixedExpense:
     bank_id: str
     account_id: str
     fecha_fin: Optional[date] = None
+    es_propio: bool = False
     id: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
 
@@ -21,6 +22,7 @@ class FixedExpense:
             "fecha_fin": datetime.combine(self.fecha_fin, datetime.min.time()) if self.fecha_fin else None,
             "bank_id": self.bank_id,
             "account_id": self.account_id,
+            "es_propio": self.es_propio,
             "created_at": self.created_at
         }
 
@@ -42,6 +44,7 @@ class FixedExpense:
             fecha_fin=f_fin,
             bank_id=data.get('bank_id', ''),
             account_id=data.get('account_id', ''),
+            es_propio=data.get('es_propio', False),
             created_at=data.get('created_at', datetime.now())
         )
 
