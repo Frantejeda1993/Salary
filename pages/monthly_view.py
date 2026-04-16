@@ -15,7 +15,7 @@ calculate_projected_balance = finance_engine.calculate_projected_balance
 get_active_budgets = finance_engine.get_active_budgets
 calculate_category_spending = finance_engine.calculate_category_spending
 get_fixed_expenses_for_month = finance_engine.get_fixed_expenses_for_month
-get_propio_expenses_by_account = finance_engine.get_propio_expenses_by_account
+get_propio_expenses_by_account = getattr(finance_engine, "get_propio_expenses_by_account", None)
 calculate_month_real_result = getattr(
     finance_engine,
     "calculate_month_real_result",
@@ -124,7 +124,7 @@ with rc2:
 if res_details:
     main_id = res_details['main_account_id']
     main_name = res_details['main_account_name']
-    propio_by_account = get_propio_expenses_by_account(selected_month, main_id)
+    propio_by_account = get_propio_expenses_by_account(selected_month, main_id) if get_propio_expenses_by_account else {}
 
     if propio_by_account:
         st.divider()
