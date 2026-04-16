@@ -31,6 +31,7 @@ class FuelExpense(Expense):
             categoria_id=data.get('categoria_id', ''),
             bank_id=data.get('bank_id', ''),
             account_id=data.get('account_id', ''),
+            es_propio=data.get('es_propio', False),
             created_at=data.get('created_at', datetime.now()),
             km_done=data.get('km_done', 0.0),
             price_per_l=data.get('price_per_l', 0.0)
