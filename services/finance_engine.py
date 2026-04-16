@@ -150,22 +150,18 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
 @st.cache_data(ttl=120, show_spinner=False)
 def get_propio_expenses_by_account(month: str, main_account_id: str) -> dict:
     """
-    Returns the sum of 'propio' expenses (es_propio=True) for each non-main account
-    in the given month. Used to identify expenses from other accounts that should be
+    Returns the sum of 'propio' fixed expenses for each non-main account
+    active in the given month. Used to identify fixed costs that should be
     reimbursed from the main account.
-
-    Returns: dict mapping account_id -> total propio amount
     """
-    data = load_all_data()
     result = {}
-    for e in data["expenses"]:
-        if not e.get("es_propio", False):
+    for fe in get_fixed_expenses_for_month(month):
+        if not fe.get("es_propio", False):
             continue
-        if _month_of(e["fecha"]) != month:
-            continue
-        acc_id = e.get("account_id")
+        acc_id = fe.get("account_id")
         if acc_id and acc_id != main_account_id:
-            result[acc_id] = result.get(acc_id, 0.0) + e.get("monto", 0.0)
+            amount = fe.get("monto_pagado") if fe.get("monto_pagado") is not None else fe.get("monto", 0.0)
+            result[acc_id] = result.get(acc_id, 0.0) + amount
     return result
 
 
