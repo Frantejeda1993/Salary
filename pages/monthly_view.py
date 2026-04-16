@@ -1,21 +1,21 @@
 import streamlit as st
 import pandas as pd
+from datetime import date
 from services import finance_engine
 from utils.date_utils import get_current_month, get_month_options
 from services.firestore_service import FirestoreService, clear_firestore_read_caches
+from models.transfer import Transfer
 from utils.money_utils import format_currency
 
 
 # Backward-compatible function bindings.
-# Some deployments may have an older `finance_engine` module that still exports
-# `calculate_real_result` / `calculate_projected_result` instead of the
-# month-scoped names. Falling back prevents import-time crashes.
 get_month_summary = finance_engine.get_month_summary
 calculate_real_balance = finance_engine.calculate_real_balance
 calculate_projected_balance = finance_engine.calculate_projected_balance
 get_active_budgets = finance_engine.get_active_budgets
 calculate_category_spending = finance_engine.calculate_category_spending
 get_fixed_expenses_for_month = finance_engine.get_fixed_expenses_for_month
+get_propio_expenses_by_account = finance_engine.get_propio_expenses_by_account
 calculate_month_real_result = getattr(
     finance_engine,
     "calculate_month_real_result",
@@ -43,6 +43,7 @@ with refresh_col:
 
 acc_srv = FirestoreService("accounts")
 bank_srv = FirestoreService("banks")
+trf_srv = FirestoreService("transfers")
 accounts = acc_srv.get_all()
 banks = bank_srv.get_all()
 bank_lookup = {b['id']: b['nombre'] for b in banks}
@@ -116,6 +117,61 @@ with rc2:
         st.success(f"### Resultado Proyectado ({main_name})\n# {format_currency(main_proj)}")
     else:
         st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")
+
+# ---------------------------------------------------------------------------
+# Gastos Propios de otras cuentas
+# ---------------------------------------------------------------------------
+if res_details:
+    main_id = res_details['main_account_id']
+    main_name = res_details['main_account_name']
+    propio_by_account = get_propio_expenses_by_account(selected_month, main_id)
+
+    if propio_by_account:
+        st.divider()
+        st.subheader("👤 Gastos Propios de otras cuentas")
+
+        acc_lookup_full = {a['id']: a for a in accounts}
+        total_propio = sum(propio_by_account.values())
+
+        # Summary line: total + per-account if multiple
+        if len(propio_by_account) == 1:
+            only_acc_id, only_amt = next(iter(propio_by_account.items()))
+            only_acc = acc_lookup_full.get(only_acc_id, {})
+            only_acc_name = f"{bank_lookup.get(only_acc.get('bank_id'), '')} - {only_acc.get('nombre', 'Cuenta')}"
+            st.write(f"Total gastos propios pendientes de reembolso: **{format_currency(total_propio)}** ({only_acc_name})")
+        else:
+            breakdown = []
+            for acc_id, amt in propio_by_account.items():
+                acc = acc_lookup_full.get(acc_id, {})
+                acc_name = f"{bank_lookup.get(acc.get('bank_id'), '')} - {acc.get('nombre', 'Cuenta')}"
+                breakdown.append(f"{acc_name}: {format_currency(amt)}")
+            breakdown_str = " | ".join(breakdown)
+            st.write(f"Total gastos propios pendientes de reembolso: **{format_currency(total_propio)}** ({breakdown_str})")
+
+        st.caption(f"Transferir desde **{main_name}** hacia cada cuenta:")
+
+        for acc_id, amt in propio_by_account.items():
+            acc = acc_lookup_full.get(acc_id, {})
+            acc_name = f"{bank_lookup.get(acc.get('bank_id'), '')} - {acc.get('nombre', 'Cuenta')}"
+
+            col_name, col_amt, col_btn = st.columns([3, 2, 2])
+            col_name.write(f"**{acc_name}**")
+            col_amt.write(format_currency(amt))
+
+            btn_key = f"transfer_propio_{acc_id}_{selected_month}"
+            if col_btn.button(f"💸 Transferir {format_currency(amt)}", key=btn_key, use_container_width=True):
+                new_trf = Transfer(
+                    fecha=date.today(),
+                    cuenta_origen=main_id,
+                    cuenta_destino=acc_id,
+                    monto=amt,
+                    is_loan=False,
+                    status='paid'
+                )
+                trf_srv.add(new_trf.to_dict())
+                clear_firestore_read_caches()
+                st.success(f"Transferencia de {format_currency(amt)} registrada hacia {acc_name}.")
+                st.rerun()
 
 st.divider()
 st.subheader("Budget Usage Breakdown")
