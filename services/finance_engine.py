@@ -342,7 +342,7 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
                 proportion = bd['available'] / total_available
                 bd['available'] -= absorption * proportion
             resultado = -(deficit - absorption)  # 0.0 if fully covered, negative if not
-
+    return {"resultado": resultado, "budget_details": budget_details}  # ← ADD THIS
 
 # ---------------------------------------------------------------------------
 # Remaining from previous month (simplified – no snapshots needed)
