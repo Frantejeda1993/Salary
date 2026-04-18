@@ -63,6 +63,8 @@ st.divider()
 st.subheader(f"Summary for {selected_month}")
 
 summary = get_month_summary(selected_month)
+if summary.get("message"):
+    st.warning(summary["message"])
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Ingreso Total (Salaries)", format_currency(summary['ingreso_total']))
@@ -93,8 +95,10 @@ with rc1:
         st.info(f"### Resultado Real ({main_name})\n# {format_currency(main_real)}")
         pending_loans = res_details.get('pending_loans', [])
         if pending_loans:
+            origin_ids = {loan.get("cuenta_origen") for loan in pending_loans if loan.get("cuenta_origen")}
+            origin_accounts = {oid: acc_srv.get_by_id(oid) for oid in origin_ids}
             for loan in pending_loans:
-                acc_origen = acc_srv.get_by_id(loan['cuenta_origen'])
+                acc_origen = origin_accounts.get(loan.get("cuenta_origen"))
                 acc_origen_name = acc_origen.get('nombre', 'Unknown Account') if acc_origen else 'Unknown Account'
                 loan_fecha = str(loan.get('fecha'))[:10]
                 pending_amount = loan.get('outstanding_amount', loan.get('monto', 0.0))
@@ -160,25 +164,37 @@ if res_details:
 
             btn_key = f"transfer_propio_{acc_id}_{selected_month}"
             if col_btn.button(f"💸 Transferir {format_currency(amt)}", key=btn_key, use_container_width=True):
-                new_trf = Transfer(
-                    fecha=date.today(),
-                    cuenta_origen=main_id,
-                    cuenta_destino=acc_id,
-                    monto=amt,
-                    is_loan=False,
-                    status='paid'
-                )
-                trf_srv.add(new_trf.to_dict())
-                clear_firestore_read_caches()
-                st.success(f"Transferencia de {format_currency(amt)} registrada hacia {acc_name}.")
-                st.rerun()
+                existing = trf_srv.get_by_fields([
+                    ("cuenta_origen", "==", main_id),
+                    ("cuenta_destino", "==", acc_id),
+                    ("reimbursement_type", "==", "propio_fixed_expense"),
+                    ("reimbursement_month", "==", selected_month),
+                ])
+                if existing:
+                    st.info(f"Ya existe una liquidación registrada para {acc_name} en {selected_month}.")
+                else:
+                    new_trf = Transfer(
+                        fecha=date.today(),
+                        cuenta_origen=main_id,
+                        cuenta_destino=acc_id,
+                        monto=amt,
+                        is_loan=False,
+                        status='paid'
+                    )
+                    payload = new_trf.to_dict()
+                    payload["reimbursement_type"] = "propio_fixed_expense"
+                    payload["reimbursement_month"] = selected_month
+                    trf_srv.add(payload)
+                    clear_firestore_read_caches()
+                    st.success(f"Transferencia de {format_currency(amt)} registrada hacia {acc_name}.")
+                    st.rerun()
 
 st.divider()
 st.subheader("Budget Usage Breakdown")
 
 active_budgets = get_active_budgets(selected_month)
 if active_budgets:
-    spending = calculate_category_spending(selected_month)
+    spending_global = calculate_category_spending(selected_month)
     cat_srv = FirestoreService("categories")
     categories = {c['id']: c['nombre'] for c in cat_srv.get_all()}
 
@@ -199,7 +215,8 @@ if active_budgets:
             acc_name = "Cuenta eliminada" if b.get('account_id') else ''
 
         limit = b.get('monto', 0.0)
-        used = spending.get(b.get('categoria_id'), 0.0)
+        account_spending = calculate_category_spending(selected_month, b.get("account_id"))
+        used = account_spending.get(b.get('categoria_id'), spending_global.get(b.get('categoria_id'), 0.0))
 
         account_id = b.get('account_id')
         cat_id = b.get('categoria_id')
@@ -256,9 +273,17 @@ if fixed_expenses:
 
     paid_count = sum(1 for fe in fixed_expenses if fe.get('estado') == 'pagado')
     pending_count = len(fixed_expenses) - paid_count
+    paid_total = sum(
+        fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe.get('monto', 0.0)
+        for fe in fixed_expenses if fe.get('estado') == 'pagado'
+    )
+    pending_total = sum(
+        fe.get('monto_pagado') if fe.get('monto_pagado') is not None else fe.get('monto', 0.0)
+        for fe in fixed_expenses if fe.get('estado') != 'pagado'
+    )
     c1, c2 = st.columns(2)
-    c1.metric("Paid", paid_count)
-    c2.metric("Pending", pending_count)
+    c1.metric("Paid", f"{paid_count} · {format_currency(paid_total)}")
+    c2.metric("Pending", f"{pending_count} · {format_currency(pending_total)}")
 else:
     st.info("No active fixed expenses for this month.")
 

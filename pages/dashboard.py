@@ -48,7 +48,8 @@ if budgets:
     for b in budgets:
         cat_name = categories.get(b['categoria_id'], 'Unknown')
         presupuesto = b['monto']
-        gastado = spending.get(b['categoria_id'], 0.0)
+        account_spending = calculate_category_spending(current_m, b.get("account_id"))
+        gastado = account_spending.get(b['categoria_id'], spending.get(b['categoria_id'], 0.0))
         
         ratio = gastado / presupuesto if presupuesto > 0 else 0
         ratio_clamped = min(ratio, 1.0)

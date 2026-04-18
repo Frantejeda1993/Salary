@@ -153,9 +153,11 @@ else:
                 es_propio_fuel = st.checkbox("Gasto Propio", value=False, key="propio_fuel", help="Marca si este gasto pertenece a la cuenta seleccionada pero debería ser reembolsado desde la cuenta principal.")
 
             if monto_fuel and monto_fuel > 0 and km_done > 0 and price_per_l > 0:
-                cost_per_1km = monto_fuel / km_done
-                cost_per_100km = cost_per_1km * 100
-                st.info(f"💡 **Calculations**:\n- Cost per 1 km: {format_currency(cost_per_1km)}\n- Cost per 100 km: {format_currency(cost_per_100km)}")
+                liters = monto_fuel / price_per_l
+                l_per_100 = (liters / km_done) * 100
+                st.info(f"💡 **Cálculos**:\n- Litros: {liters:.2f}L\n- Litros cada 100km: {l_per_100:.2f}L/100km")
+            elif monto_fuel and monto_fuel > 0:
+                st.info("💡 **Cálculos**:\n- Litros: sin datos\n- Litros cada 100km: sin datos")
 
             if st.form_submit_button("Save Fuel Expense"):
                 if monto_fuel is None:
@@ -254,9 +256,11 @@ def edit_expense_dialog(exp, acc_op, cat_op):
                 price_per_l = st.number_input("Price per L", value=float(exp.get("price_per_l", 0.0)), min_value=0.0, step=0.1, format="%.3f")
                 
             if monto > 0 and km_done > 0 and price_per_l > 0:
-                cost_per_1km = monto / km_done
-                cost_per_100km = cost_per_1km * 100
-                st.info(f"💡 **Calculations**:\n- Cost per 1 km: {format_currency(cost_per_1km)}\n- Cost per 100 km: {format_currency(cost_per_100km)}")
+                liters = monto / price_per_l
+                l_per_100 = (liters / km_done) * 100
+                st.info(f"💡 **Cálculos**:\n- Litros: {liters:.2f}L\n- Litros cada 100km: {l_per_100:.2f}L/100km")
+            elif monto > 0:
+                st.info("💡 **Cálculos**:\n- Litros: sin datos\n- Litros cada 100km: sin datos")
 
         if st.form_submit_button("Update Expense"):
             if nombre and monto > 0:
@@ -419,11 +423,11 @@ for tx in filtered_tx[:50]:  # Limit to 50
         km = tx.get('km_done', 0)
         pl = tx.get('price_per_l', 0)
         monto = tx.get('monto', 0)
-        extra_info = ""
+        extra_info = "\n\n🚗 Litros: sin datos | L/100km: sin datos"
         if km > 0 and pl > 0:
-            price_per_km = monto / km
-            l_per_100 = (monto / km / pl) * 100
-            extra_info = f"\n\n🚗 {format_currency(price_per_km)}/km | {l_per_100:.1f}L/100km"
+            liters = monto / pl
+            l_per_100 = (liters / km) * 100
+            extra_info = f"\n\n🚗 Litros: {liters:.2f}L | {l_per_100:.1f}L/100km"
         c4.write(f"**{amount_str}**{extra_info}")
     else:
         c4.write(f"**{amount_str}**")
