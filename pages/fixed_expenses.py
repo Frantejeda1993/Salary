@@ -171,7 +171,7 @@ def edit_fe_dialog(fe, acc_options):
             has_end_date = st.checkbox("Has End Date?", value=current_end is not None, key=f"he_{fe['id']}")
             fecha_fin = st.date_input("End Date", value=current_end if current_end else date.today(), format="DD/MM/YYYY") if has_end_date else None
         
-        ses_propio = st.checkbox("Gasto Propio", value=fe.get("es_propio", False), key=f"propio_{fe['id']}", help="Este gasto fijo pertenece a esta cuenta pero debe ser reembolsado desde la cuenta principal.")
+        es_propio = st.checkbox("Gasto Propio", value=fe.get("es_propio", False), key=f"propio_{fe['id']}", help="Este gasto fijo pertenece a esta cuenta pero debe ser reembolsado desde la cuenta principal.")
         submitted = st.form_submit_button("Update Fixed Expense")
         
         if submitted:

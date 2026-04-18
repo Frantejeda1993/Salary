@@ -63,6 +63,11 @@ st.divider()
 st.subheader(f"Summary for {selected_month}")
 
 summary = get_month_summary(selected_month)
+if not summary.get('resultado_real_details'):
+    st.warning(
+        "⚠️ No hay cuenta principal activa. "
+        "Ve a **Configuración → Accounts** y marca una cuenta como principal."
+    )
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Ingreso Total (Salaries)", format_currency(summary['ingreso_total']))
@@ -178,7 +183,6 @@ st.subheader("Budget Usage Breakdown")
 
 active_budgets = get_active_budgets(selected_month)
 if active_budgets:
-    spending = calculate_category_spending(selected_month)
     cat_srv = FirestoreService("categories")
     categories = {c['id']: c['nombre'] for c in cat_srv.get_all()}
 
@@ -199,7 +203,8 @@ if active_budgets:
             acc_name = "Cuenta eliminada" if b.get('account_id') else ''
 
         limit = b.get('monto', 0.0)
-        used = spending.get(b.get('categoria_id'), 0.0)
+        account_spending = calculate_category_spending(selected_month, b.get('account_id'))
+        used = account_spending.get(b.get('categoria_id'), 0.0)
 
         account_id = b.get('account_id')
         cat_id = b.get('categoria_id')
