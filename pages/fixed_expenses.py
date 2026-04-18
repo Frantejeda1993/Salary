@@ -86,6 +86,11 @@ st.session_state['fe_month'] = selected_month
 
 # List active fixed expenses for the selected month
 active_fes = get_fixed_expenses_for_month(selected_month)
+month_instances = {
+    inst.get("fixed_expense_id"): inst
+    for inst in fei_srv.get_by_field("mes", "==", selected_month)
+    if inst.get("fixed_expense_id")
+}
 
 if active_fes:
     st.write(f"Fixed Expenses for **{selected_month}**:")
@@ -124,8 +129,7 @@ if active_fes:
 
         if col6.button(btn_label, key=f"toggle_{fe['id']}_{selected_month}"):
             # Check if an instance already exists
-            instances = fei_srv.get_by_field("fixed_expense_id", "==", fe['id'])
-            inst = next((i for i in instances if i['mes'] == selected_month), None)
+            inst = month_instances.get(fe['id'])
 
             new_estado = "impagado" if estado == "pagado" else "pagado"
 
@@ -171,7 +175,7 @@ def edit_fe_dialog(fe, acc_options):
             has_end_date = st.checkbox("Has End Date?", value=current_end is not None, key=f"he_{fe['id']}")
             fecha_fin = st.date_input("End Date", value=current_end if current_end else date.today(), format="DD/MM/YYYY") if has_end_date else None
         
-        ses_propio = st.checkbox("Gasto Propio", value=fe.get("es_propio", False), key=f"propio_{fe['id']}", help="Este gasto fijo pertenece a esta cuenta pero debe ser reembolsado desde la cuenta principal.")
+        es_propio = st.checkbox("Gasto Propio", value=fe.get("es_propio", False), key=f"propio_{fe['id']}", help="Este gasto fijo pertenece a esta cuenta pero debe ser reembolsado desde la cuenta principal.")
         submitted = st.form_submit_button("Update Fixed Expense")
         
         if submitted:

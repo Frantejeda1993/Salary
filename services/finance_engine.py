@@ -23,6 +23,11 @@ def _month_of(value) -> str:
     return _as_date(value).strftime("%Y-%m")
 
 
+def _is_propio_pending(fe: dict) -> bool:
+    """A 'propio' fixed expense is pending until there is a matching reimbursement transfer."""
+    return fe.get("es_propio", False) and fe.get("estado") != "pagado"
+
+
 # ---------------------------------------------------------------------------
 # Salary & snapshot helpers
 # ---------------------------------------------------------------------------
@@ -156,7 +161,7 @@ def get_propio_expenses_by_account(month: str, main_account_id: str) -> dict:
     """
     result = {}
     for fe in get_fixed_expenses_for_month(month):
-        if not fe.get("es_propio", False):
+        if not _is_propio_pending(fe):
             continue
         acc_id = fe.get("account_id")
         if acc_id and acc_id != main_account_id:
@@ -286,11 +291,11 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
         if t.get("cuenta_origen") == account_id and _month_of(t["fecha"]) == month
     )
 
-    # --- Fixed expenses (ALL: paid + pending) ---
+    # --- Fixed expenses (ALL: paid + pending; excluding pending "propio") ---
     fixed_total = sum(
         fe["monto"]
         for fe in get_fixed_expenses_for_month(month)
-        if fe.get("account_id") == account_id
+        if fe.get("account_id") == account_id and not _is_propio_pending(fe)
     )
 
     # --- Budget impact ---
@@ -317,9 +322,7 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
         })
 
     # Non-budgeted actual expenses (only positive values count)
-    non_budgeted = sum(
-        max(v, 0.0) for k, v in spending.items() if k not in budget_cat_ids
-    )
+    non_budgeted = sum(max(v, 0.0) for k, v in spending.items() if k not in budget_cat_ids)
 
     resultado = (
         salary_total + income_total + transfers_in
@@ -332,18 +335,24 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
     # If projected result is negative but there are budgets with available capacity,
     # absorb the deficit into the budget with the most available (show projected = 0).
     # If no positive budgets exist, resultado stays negative.
+    budget_absorbed = 0.0
     if resultado < 0:
         positive_budgets = [bd for bd in budget_details if bd['available'] > 0]
         total_available = sum(bd['available'] for bd in positive_budgets)
         deficit = abs(resultado)
         if total_available > 0:
             absorption = min(deficit, total_available)
+            budget_absorbed = absorption
             for bd in positive_budgets:
                 proportion = bd['available'] / total_available
                 bd['available'] -= absorption * proportion
             resultado = -(deficit - absorption)  # 0.0 if fully covered, negative if not
 
-    return {"resultado": resultado, "budget_details": budget_details}
+    return {
+        "resultado": resultado,
+        "budget_details": budget_details,
+        "budget_absorbed": budget_absorbed,
+    }
 
 # ---------------------------------------------------------------------------
 # Remaining from previous month (simplified – no snapshots needed)
@@ -534,6 +543,7 @@ def get_month_summary(month: str) -> dict:
     resultado_real_details = None
     remaining_from_previous_month = 0.0
 
+    message = None
     if main_acc:
         main_id = main_acc['id']
         remaining_from_previous_month = get_remaining_from_previous_month(month, main_id)
@@ -551,6 +561,9 @@ def get_month_summary(month: str) -> dict:
             "snapshot_status": None,
         }
 
+    else:
+        message = "Seleccione una cuenta principal activa"
+
     return {
         "ingreso_total": ingreso_total,
         "gastos_fijos": gastos_fijos_total,
@@ -561,6 +574,7 @@ def get_month_summary(month: str) -> dict:
         "resultado_real": resultado_real,
         "resultado_proyectado": resultado_proyectado,
         "resultado_real_details": resultado_real_details,
+        "message": message,
     }
 
 
