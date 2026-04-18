@@ -1,4 +1,5 @@
 from datetime import datetime
+from calendar import monthrange
 from typing import Optional
 import streamlit as st
 from dateutil.relativedelta import relativedelta
@@ -150,11 +151,12 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
 @st.cache_data(ttl=120, show_spinner=False)
 def get_propio_expenses_by_account(month: str, main_account_id: str) -> dict:
     """
-    Returns the sum of 'propio' fixed expenses for each non-main account
-    active in the given month. Used to identify fixed costs that should be
-    reimbursed from the main account.
+    Returns total propio expenses by non-main account for the month.
+    Includes both fixed expenses and real expenses marked as es_propio.
     """
     result = {}
+
+    # 1) Propio fixed expenses active in month
     for fe in get_fixed_expenses_for_month(month):
         if not fe.get("es_propio", False):
             continue
@@ -162,6 +164,18 @@ def get_propio_expenses_by_account(month: str, main_account_id: str) -> dict:
         if acc_id and acc_id != main_account_id:
             amount = fe.get("monto_pagado") if fe.get("monto_pagado") is not None else fe.get("monto", 0.0)
             result[acc_id] = result.get(acc_id, 0.0) + amount
+
+    # 2) Propio real expenses in month
+    data = load_all_data()
+    for exp in data["expenses"]:
+        if not exp.get("es_propio", False):
+            continue
+        if _month_of(exp["fecha"]) != month:
+            continue
+        acc_id = exp.get("account_id")
+        if acc_id and acc_id != main_account_id:
+            result[acc_id] = result.get(acc_id, 0.0) + exp.get("monto", 0.0)
+
     return result
 
 
@@ -306,7 +320,7 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
         real_spent = spending.get(cat_id, 0.0)
         # Use actual if it exceeds the budget; otherwise assume full budget will be spent
         effective = max(presupuesto, real_spent)
-        available = presupuesto - real_spent
+        available = presupuesto - max(real_spent, 0.0)
         budget_impact += effective
         budget_details.append({
             "budget_id": b["id"],
@@ -354,8 +368,7 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
     """
     Result carried over from the previous month into `month`.
 
-    - Previous month already passed  → use calculate_month_real_result
-    - Previous month is current/future → use calculate_month_projected_result
+    - Uses real cumulative balance at the end of previous month.
     - Previous month is before MIN_MANAGED_MONTH → 0.0
     """
     if month <= MIN_MANAGED_MONTH:
@@ -365,11 +378,7 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
     if prev_month < MIN_MANAGED_MONTH:
         return 0.0
 
-    current_month = get_current_month()
-    if prev_month < current_month:
-        return calculate_month_real_result(main_account_id, prev_month)
-    else:
-        return calculate_month_projected_result(main_account_id, prev_month)["resultado"]
+    return calculate_real_balance(main_account_id, prev_month)
 
 
 # ---------------------------------------------------------------------------
@@ -403,21 +412,33 @@ def _get_account_historical_salary_incomes(account_id: str, up_to_month: str = N
 @st.cache_data(ttl=120, show_spinner=False)
 def calculate_real_balance(account_id: str, month: str | None = None) -> float:
     """
-    Cumulative account balance from initial balance through all historical transactions.
-    Used for the Dashboard totals and the Balances per Account table.
+    Cumulative account balance from initial balance up to the end of target month.
+    Used for Dashboard totals and Balances per Account table.
     """
     data = load_all_data()
     account = next((a for a in data["accounts"] if a.get("id") == account_id), None)
     if not account:
         return 0.0
 
-    balance = account.get('saldo_inicial', 0.0)
     target_month = month or get_current_month()
+    target_date = parse_month(target_month)
+    _, last_day = monthrange(target_date.year, target_date.month)
+    cutoff = target_date.replace(day=last_day).date()
+
+    balance = account.get('saldo_inicial', 0.0)
 
     balance += _get_account_historical_salary_incomes(account_id, target_month)
 
-    balance += sum(i.get('monto', 0.0) for i in data["incomes"] if i.get("account_id") == account_id)
-    balance -= sum(e.get('monto', 0.0) for e in data["expenses"] if e.get("account_id") == account_id)
+    balance += sum(
+        i.get('monto', 0.0)
+        for i in data["incomes"]
+        if i.get("account_id") == account_id and _as_date(i['fecha']) <= cutoff
+    )
+    balance -= sum(
+        e.get('monto', 0.0)
+        for e in data["expenses"]
+        if e.get("account_id") == account_id and _as_date(e['fecha']) <= cutoff
+    )
 
     instances_by_fe = {}
     for inst in data["fixed_expense_instances"]:
@@ -425,11 +446,25 @@ def calculate_real_balance(account_id: str, month: str | None = None) -> float:
         if fe_id:
             instances_by_fe.setdefault(fe_id, []).append(inst)
     for fe in [f for f in data["fixed_expenses"] if f.get("account_id") == account_id]:
-        paid = [i for i in instances_by_fe.get(fe['id'], []) if i.get('estado') == 'pagado']
-        balance -= sum(i.get('monto', fe.get('monto', 0.0)) for i in paid)
+        paid = [
+            i for i in instances_by_fe.get(fe['id'], [])
+            if i.get('estado') == 'pagado' and i.get('mes', '') <= target_month
+        ]
+        balance -= sum(
+            i.get('monto') if i.get('monto') is not None else fe.get('monto', 0.0)
+            for i in paid
+        )
 
-    balance -= sum(t.get('monto', 0.0) for t in data["transfers"] if t.get("cuenta_origen") == account_id)
-    balance += sum(t.get('monto', 0.0) for t in data["transfers"] if t.get("cuenta_destino") == account_id)
+    balance -= sum(
+        t.get('monto', 0.0)
+        for t in data["transfers"]
+        if t.get("cuenta_origen") == account_id and _as_date(t['fecha']) <= cutoff
+    )
+    balance += sum(
+        t.get('monto', 0.0)
+        for t in data["transfers"]
+        if t.get("cuenta_destino") == account_id and _as_date(t['fecha']) <= cutoff
+    )
 
     return balance
 
@@ -459,7 +494,7 @@ def calculate_projected_balance(account_id: str, month: str | None = None) -> di
             continue
         cat_id = b['categoria_id']
         presupuesto = b['monto']
-        real_spent = spending.get(cat_id, 0.0)
+        real_spent = max(spending.get(cat_id, 0.0), 0.0)
         available = presupuesto - real_spent
         budget_details.append({
             'budget_id': b['id'],

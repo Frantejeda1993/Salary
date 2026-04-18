@@ -32,10 +32,12 @@ def parse_amount_input(raw_value):
     except ValueError:
         return None
 
+
+acc_options = build_account_options(accounts) if accounts else []
+
 if len(accounts) < 2:
     st.warning("You need at least two Accounts to make a transfer.")
 else:
-    acc_options = build_account_options(accounts)
     acc_labels = [a['label'] for a in acc_options]
     main_acc_index = next((i for i, a in enumerate(acc_options) if a.get("is_main") or a.get("nombre") == "Main"), 0)
     default_destino_index = next((i for i, a in enumerate(acc_options) if i != main_acc_index), 0)

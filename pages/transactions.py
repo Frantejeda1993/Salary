@@ -419,11 +419,12 @@ for tx in filtered_tx[:50]:  # Limit to 50
         km = tx.get('km_done', 0)
         pl = tx.get('price_per_l', 0)
         monto = tx.get('monto', 0)
-        extra_info = ""
-        if km > 0 and pl > 0:
+        if km > 0 and pl > 0 and monto > 0:
             price_per_km = monto / km
             l_per_100 = (monto / km / pl) * 100
             extra_info = f"\n\n🚗 {format_currency(price_per_km)}/km | {l_per_100:.1f}L/100km"
+        else:
+            extra_info = "\n\n🚗 *sin datos*"
         c4.write(f"**{amount_str}**{extra_info}")
     else:
         c4.write(f"**{amount_str}**")
