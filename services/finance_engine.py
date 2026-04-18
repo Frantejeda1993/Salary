@@ -423,7 +423,7 @@ def calculate_real_balance(account_id: str, month: str | None = None) -> float:
     target_month = month or get_current_month()
     target_date = parse_month(target_month)
     _, last_day = monthrange(target_date.year, target_date.month)
-    cutoff = target_date.replace(day=last_day).date()
+    cutoff = target_date.replace(day=last_day)
 
     balance = account.get('saldo_inicial', 0.0)
 
