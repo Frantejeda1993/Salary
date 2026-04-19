@@ -366,7 +366,10 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
     """
     Result carried over from the previous month into `month`.
 
-    - Uses real cumulative balance at the end of previous month.
+    - month <= current month  → cumulative real balance at end of previous month.
+    - month >  current month  → cumulative projected balance at end of previous month
+                                minus gastos propios owed by main account to other
+                                accounts in that previous month.
     - Previous month is before MIN_MANAGED_MONTH → 0.0
     """
     if month <= MIN_MANAGED_MONTH:
@@ -376,7 +379,17 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
     if prev_month < MIN_MANAGED_MONTH:
         return 0.0
 
-    return calculate_real_balance(main_account_id, prev_month)
+    current_month = get_current_month()
+
+    if month <= current_month:
+        # Past / current month: authoritative real cumulative balance.
+        return calculate_real_balance(main_account_id, prev_month)
+    else:
+        # Future month: projected cumulative balance of prev month minus
+        # amounts the main account owes to other accounts (propios).
+        proj_prev = calculate_projected_balance(main_account_id, prev_month)
+        propios = sum(get_propio_expenses_by_account(prev_month, main_account_id).values())
+        return proj_prev["resultado"] - propios
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +588,21 @@ def get_month_summary(month: str) -> dict:
         )
         proj = calculate_month_projected_result(main_id, month)
         resultado_proyectado = proj["resultado"] + remaining_from_previous_month
+
+        # Second absorption pass: the first pass inside calculate_month_projected_result
+        # only absorbed against the monthly delta. If remaining_from_previous_month is
+        # negative it can push resultado_proyectado below zero again. Absorb that
+        # residual deficit from whatever budget capacity is still available.
+        if resultado_proyectado < 0:
+            available_capacity = sum(
+                bd["available"]
+                for bd in proj["budget_details"]
+                if bd["available"] > 0
+            )
+            if available_capacity > 0:
+                deficit = abs(resultado_proyectado)
+                absorption = min(deficit, available_capacity)
+                resultado_proyectado += absorption
 
         resultado_real_details = {
             "main_account_id": main_id,
