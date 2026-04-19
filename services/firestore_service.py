@@ -93,6 +93,7 @@ def _clear_firestore_caches():
     # when Firestore data changes (fixes stale cache after writes like toggling fixed expenses)
     try:
         import services.finance_engine as fe
+        fe._calculate_raw_category_expenses.clear()
         fe.calculate_salary_net.clear()
         fe.get_active_budgets.clear()
         fe.get_fixed_expenses_for_month.clear()
