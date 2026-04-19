@@ -90,17 +90,13 @@ with rc1:
     if res_details:
         main_id = res_details['main_account_id']
         main_name = res_details['main_account_name']
-        remaining_from_previous_month = summary.get('remaining_from_previous_month', 0.0)
-        main_real = (
-            calculate_month_real_result(main_id, selected_month)
-            + remaining_from_previous_month
-        )
+        main_real = summary["resultado_real"]
         st.info(f"### Resultado Real ({main_name})\n# {format_currency(main_real)}")
         pending_loans = res_details.get('pending_loans', [])
         if pending_loans:
+            acc_lookup = {a["id"]: a.get("nombre", "Unknown Account") for a in accounts}
             for loan in pending_loans:
-                acc_origen = acc_srv.get_by_id(loan['cuenta_origen'])
-                acc_origen_name = acc_origen.get('nombre', 'Unknown Account') if acc_origen else 'Unknown Account'
+                acc_origen_name = acc_lookup.get(loan.get("cuenta_origen"), "Unknown Account")
                 loan_fecha = str(loan.get('fecha'))[:10]
                 pending_amount = loan.get('outstanding_amount', loan.get('monto', 0.0))
                 st.markdown(
@@ -114,11 +110,8 @@ with rc1:
 
 with rc2:
     if res_details:
-        main_id = res_details['main_account_id']
         main_name = res_details['main_account_name']
-        remaining_from_previous_month = summary.get('remaining_from_previous_month', 0.0)
-        proj_result = calculate_month_projected_result(main_id, selected_month)
-        main_proj = proj_result['resultado'] + remaining_from_previous_month
+        main_proj = summary["resultado_proyectado"]
         st.success(f"### Resultado Proyectado ({main_name})\n# {format_currency(main_proj)}")
     else:
         st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")

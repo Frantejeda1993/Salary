@@ -1,17 +1,13 @@
 from datetime import datetime
 from calendar import monthrange
-from typing import Optional
 import streamlit as st
 from dateutil.relativedelta import relativedelta
 from utils.date_utils import is_active_in_month, get_current_month, parse_month
-from services.firestore_service import FirestoreService
 from services.data_cache import load_all_data
 
-MIN_MANAGED_MONTH = "2026-02"  # Months before this return 0 for remaining
-
-
-def _get_service(collection_name):
-    return FirestoreService(collection_name)
+# The earliest month for which carry-over from previous month is computed.
+# Months at or before this value receive 0 as remaining_from_previous_month.
+MIN_MANAGED_MONTH: str = "2026-02"
 
 
 def _as_date(value):
@@ -30,40 +26,30 @@ def _month_of(value) -> str:
 
 @st.cache_data(ttl=120, show_spinner=False)
 def calculate_salary_net(salary_id: str, month: str) -> float:
-    """Calculates the net salary for a given month considering active deductions and overtimes."""
+    """Net salary for the month: gross + overtime − deductions."""
     data = load_all_data()
     salary_data = next((s for s in data["salaries"] if s.get("id") == salary_id), None)
     if not salary_data:
         return 0.0
 
-    bruto = salary_data.get('salario_bruto', 0.0)
-    overtimes = [ot for ot in data["overtimes"] if ot.get("salary_id") == salary_id]
-    overtime_amount = sum(ot.get('monto_bruto', 0.0) for ot in overtimes if ot.get('mes_aplicacion') == month)
+    bruto = salary_data.get("salario_bruto", 0.0)
+    overtime_amount = sum(
+        ot.get("monto_bruto", 0.0)
+        for ot in data["overtimes"]
+        if ot.get("salary_id") == salary_id and ot.get("mes_aplicacion") == month
+    )
 
-    net = bruto + overtime_amount
-    total_deductions = 0.0
+    deductions = salary_data.get("deductions", [])
+    # NOTE: Salary.from_dict() already migrates the legacy format on read.
+    # If deductions is empty here, the salary has no deductions configured.
+    total_deductions = sum(
+        (bruto + (overtime_amount if d.get("applies_to_extras", False) else 0.0))
+        * float(d.get("percentage", 0.0))
+        for d in deductions
+        if d.get("name")
+    )
 
-    if 'deductions' in salary_data and isinstance(salary_data['deductions'], list):
-        for d in salary_data['deductions']:
-            percent = float(d.get('percentage', 0.0))
-            apply_extra = d.get('applies_to_extras', False)
-            base = bruto + (overtime_amount if apply_extra else 0.0)
-            total_deductions += base * percent
-    else:
-        old_deductions = [
-            ('cont_comun', 'cont_comun_aplica_extras'),
-            ('mei', 'mei_aplica_extras'),
-            ('formacion', 'formacion_aplica_extras'),
-            ('desempleo', 'desempleo_aplica_extras'),
-            ('irpf', 'irpf_aplica_extras'),
-        ]
-        for ded, applies_key in old_deductions:
-            percent = salary_data.get(ded, 0.0) / 100.0
-            apply_extra = salary_data.get(applies_key, False)
-            base = bruto + (overtime_amount if apply_extra else 0.0)
-            total_deductions += base * percent
-
-    return net - total_deductions
+    return bruto + overtime_amount - total_deductions
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -131,6 +117,24 @@ def calculate_category_spending(month: str, account_id: str = None) -> dict:
                 spending[cat_id] = spending.get(cat_id, 0.0) - inc.get('monto', 0.0)
 
     return spending
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _calculate_raw_category_expenses(month: str, account_id: str | None = None) -> dict[str, float]:
+    """
+    Raw (non-netted) expense totals per category for a given month.
+    Used for projected calculations to avoid double-counting incomes.
+    """
+    data = load_all_data()
+    expenses = data["expenses"]
+    if account_id:
+        expenses = [e for e in expenses if e.get("account_id") == account_id]
+    raw: dict[str, float] = {}
+    for exp in expenses:
+        if _month_of(exp["fecha"]) == month:
+            cat_id = exp.get("categoria_id", "")
+            raw[cat_id] = raw.get(cat_id, 0.0) + exp.get("monto", 0.0)
+    return raw
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -250,27 +254,19 @@ def calculate_month_real_result(account_id: str, month: str) -> float:
 @st.cache_data(ttl=120, show_spinner=False)
 def calculate_month_projected_result(account_id: str, month: str) -> dict:
     """
-    Projected result for a specific account and month.
+    Projected P&L for a specific account and month.
 
-    Income side (same as real):
-      + net salaries + extra incomes + transfers received
-
-    Expense side (includes pending obligations):
-      - ALL fixed expenses this month (paid + pending)
-      - For budgeted categories: max(budget, actual_spent)
-      - For non-budgeted categories: actual spent (positive only)
-      - transfers sent
-
-    If resultado < 0 and there are budgets with available > 0, the deficit is
-    absorbed into the budget with the most available capacity (shows projected = 0
-    with that budget reduced). If no positive budgets exist, projected stays negative.
-
-    Returns:
-        dict with 'resultado' (float) and 'budget_details' (list).
+    Formula (per spec):
+        + net salaries
+        + all incomes (extra income)
+        + transfers received
+        - fixed expenses (paid + pending)
+        - active budgets (or actual if overrun) [uses RAW spending to avoid double-count]
+        - non-budgeted raw expenses
+        - transfers sent
     """
     data = load_all_data()
 
-    # --- Income ---
     salary_total = sum(
         calculate_salary_net(s["id"], month)
         for s in data["salaries"]
@@ -300,16 +296,16 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
         if t.get("cuenta_origen") == account_id and _month_of(t["fecha"]) == month
     )
 
-    # --- Fixed expenses (ALL: paid + pending) ---
     fixed_total = sum(
         fe["monto"]
         for fe in get_fixed_expenses_for_month(month)
         if fe.get("account_id") == account_id
     )
 
-    # --- Budget impact ---
     active_budgets = [b for b in get_active_budgets(month) if b.get("account_id") == account_id]
-    spending = calculate_category_spending(month, account_id)
+    # RAW spending for calculation (spec: budget + overrun); NETTED for display (refunds reduce budget consumption)
+    raw_spending = _calculate_raw_category_expenses(month, account_id)
+    netted_spending = calculate_category_spending(month, account_id)
     budget_cat_ids = {b["categoria_id"] for b in active_budgets}
 
     budget_impact = 0.0
@@ -317,22 +313,26 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
     for b in active_budgets:
         cat_id = b["categoria_id"]
         presupuesto = b["monto"]
-        real_spent = spending.get(cat_id, 0.0)
-        # Use actual if it exceeds the budget; otherwise assume full budget will be spent
-        effective = max(presupuesto, real_spent)
-        available = presupuesto - max(real_spent, 0.0)
+        raw_spent = raw_spending.get(cat_id, 0.0)
+        netted_spent = netted_spending.get(cat_id, 0.0)
+        # Charge at least the budget amount; if raw spending exceeds budget, charge the overrun
+        effective = max(presupuesto, raw_spent)
+        # Display: refunds free up budget room (use netted for available)
+        available = presupuesto - max(netted_spent, 0.0)
         budget_impact += effective
         budget_details.append({
             "budget_id": b["id"],
             "categoria_id": cat_id,
             "presupuesto": presupuesto,
-            "real_spent": real_spent,
+            "real_spent": netted_spent,
             "available": available,
         })
 
-    # Non-budgeted actual expenses (only positive values count)
+    # Non-budgeted: use raw expenses (incomes are already counted in income_total)
     non_budgeted = sum(
-        max(v, 0.0) for k, v in spending.items() if k not in budget_cat_ids
+        raw_spending.get(cat_id, 0.0)
+        for cat_id in raw_spending
+        if cat_id not in budget_cat_ids
     )
 
     resultado = (
@@ -343,19 +343,17 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
         - transfers_out
     )
 
-    # If projected result is negative but there are budgets with available capacity,
-    # absorb the deficit into the budget with the most available (show projected = 0).
-    # If no positive budgets exist, resultado stays negative.
+    # Spec rule: projected must not go negative while budgets have available capacity.
+    # Absorb deficit proportionally from budgets with remaining room.
     if resultado < 0:
-        positive_budgets = [bd for bd in budget_details if bd['available'] > 0]
-        total_available = sum(bd['available'] for bd in positive_budgets)
-        deficit = abs(resultado)
+        positive_budgets = [bd for bd in budget_details if bd["available"] > 0]
+        total_available = sum(bd["available"] for bd in positive_budgets)
         if total_available > 0:
+            deficit = abs(resultado)
             absorption = min(deficit, total_available)
             for bd in positive_budgets:
-                proportion = bd['available'] / total_available
-                bd['available'] -= absorption * proportion
-            resultado = -(deficit - absorption)  # 0.0 if fully covered, negative if not
+                bd["available"] -= absorption * (bd["available"] / total_available)
+            resultado = resultado + absorption  # approaches 0; equals 0 if fully absorbed
 
     return {"resultado": resultado, "budget_details": budget_details}
 
@@ -472,59 +470,58 @@ def calculate_real_balance(account_id: str, month: str | None = None) -> float:
 @st.cache_data(ttl=120, show_spinner=False)
 def calculate_projected_balance(account_id: str, month: str | None = None) -> dict:
     """
-    Cumulative projected balance = real_balance − pending fixed − pending budgets.
-    Used for the Balances per Account table and Dashboard.
+    Cumulative projected balance = real_balance − unpaid fixed − remaining budgets.
+    Uses RAW spending for budget pending calculation to be consistent with
+    calculate_month_projected_result. These two functions are mathematically equivalent:
+        projected_balance(month) == month_projected_result(month) + real_balance(prev_month)
     """
     target_month = month or get_current_month()
     real = calculate_real_balance(account_id, target_month)
 
     fixed_pendientes = sum(
-        fe['monto']
+        fe["monto"]
         for fe in get_fixed_expenses_for_month(target_month)
-        if fe['account_id'] == account_id and fe['estado'] == 'impagado'
+        if fe.get("account_id") == account_id and fe["estado"] == "impagado"
     )
 
     active_budgets = get_active_budgets(target_month)
-    spending = calculate_category_spending(target_month, account_id)
+    raw_spending = _calculate_raw_category_expenses(target_month, account_id)
+    netted_spending = calculate_category_spending(target_month, account_id)
 
     budget_details = []
     pending_budget_impact = 0.0
     for b in active_budgets:
-        if b['account_id'] != account_id:
+        if b["account_id"] != account_id:
             continue
-        cat_id = b['categoria_id']
-        presupuesto = b['monto']
-        real_spent = max(spending.get(cat_id, 0.0), 0.0)
-        available = presupuesto - real_spent
+        cat_id = b["categoria_id"]
+        presupuesto = b["monto"]
+        raw_spent = raw_spending.get(cat_id, 0.0)
+        netted_spent = max(netted_spending.get(cat_id, 0.0), 0.0)
+        available = presupuesto - netted_spent  # display: refunds free up room
         budget_details.append({
-            'budget_id': b['id'],
-            'categoria_id': cat_id,
-            'presupuesto': presupuesto,
-            'real_spent': real_spent,
-            'available': available,
+            "budget_id": b["id"],
+            "categoria_id": cat_id,
+            "presupuesto": presupuesto,
+            "real_spent": netted_spent,
+            "available": available,
         })
-        if real_spent < presupuesto:
-            pending_budget_impact += available
+        # Only charge what's still unspent from the budget (raw basis)
+        if raw_spent < presupuesto:
+            pending_budget_impact += presupuesto - raw_spent
 
     resultado = real - fixed_pendientes - pending_budget_impact
 
     if resultado < 0:
-        budgets_with_available = [bd for bd in budget_details if bd['available'] > 0]
-        if budgets_with_available:
+        budgets_with_available = [bd for bd in budget_details if bd["available"] > 0]
+        total_available = sum(bd["available"] for bd in budgets_with_available)
+        if total_available > 0:
             deficit = abs(resultado)
-            total_available = sum(bd['available'] for bd in budgets_with_available)
-            if total_available >= deficit:
-                for bd in budgets_with_available:
-                    proportion = bd['available'] / total_available if total_available > 0 else 0
-                    bd['available'] -= deficit * proportion
-                resultado = 0.0
-            else:
-                for bd in budgets_with_available:
-                    proportion = bd['available'] / total_available if total_available > 0 else 0
-                    bd['available'] -= total_available * proportion
-                resultado = -(deficit - total_available)
+            absorption = min(deficit, total_available)
+            for bd in budgets_with_available:
+                bd["available"] -= absorption * (bd["available"] / total_available)
+            resultado = resultado + absorption
 
-    return {'resultado': resultado, 'budget_details': budget_details}
+    return {"resultado": resultado, "budget_details": budget_details}
 
 
 # ---------------------------------------------------------------------------
@@ -597,75 +594,3 @@ def get_month_summary(month: str) -> dict:
         "resultado_proyectado": resultado_proyectado,
         "resultado_real_details": resultado_real_details,
     }
-
-
-# ---------------------------------------------------------------------------
-# Snapshot / rollover helpers (kept for backward compatibility, not used for display)
-# ---------------------------------------------------------------------------
-
-def _get_monthly_snapshot_service():
-    return _get_service("monthly_account_snapshots")
-
-
-def get_monthly_account_snapshot(month: str, account_id: str) -> Optional[dict]:
-    snapshots = [
-        s for s in load_all_data()["monthly_account_snapshots"]
-        if s.get("month") == month and s.get("account_id") == account_id
-    ]
-    return snapshots[0] if snapshots else None
-
-
-def upsert_monthly_account_snapshot(month: str, account_id: str, data: dict) -> dict:
-    snapshot_srv = _get_monthly_snapshot_service()
-    now = datetime.utcnow()
-    payload = {
-        "month": month,
-        "account_id": account_id,
-        "is_main_account_for_month": bool(data.get("is_main_account_for_month", False)),
-        "resultado_real_closed": float(data.get("resultado_real_closed", 0.0)),
-        "remaining_from_previous_month": float(data.get("remaining_from_previous_month", 0.0)),
-        "status": data.get("status", "open"),
-        "updated_at": now,
-    }
-    if data.get("resultado_proyectado_frozen") is not None:
-        payload["resultado_proyectado_frozen"] = float(data["resultado_proyectado_frozen"])
-
-    existing = get_monthly_account_snapshot(month, account_id)
-    if existing:
-        snapshot_srv.update(existing["id"], payload)
-        return snapshot_srv.get_by_id(existing["id"])
-    payload["created_at"] = now
-    doc_id = snapshot_srv.add(payload)
-    return snapshot_srv.get_by_id(doc_id)
-
-
-def resolve_main_account_for_month(month: str) -> Optional[dict]:
-    data = load_all_data()
-    accounts = data["accounts"]
-    return next((a for a in accounts if a.get("is_main", False)), None)
-
-
-def _get_previous_month(month: str) -> str:
-    return (parse_month(month) - relativedelta(months=1)).strftime("%Y-%m")
-
-
-def run_month_rollover_if_needed(today=None) -> dict:
-    """No-op stub kept for compatibility. Display calculations no longer use snapshots."""
-    today_date = today.date() if isinstance(today, datetime) else today
-    if today_date is None:
-        today_date = datetime.now().date()
-    current_month = today_date.strftime("%Y-%m")
-    previous_month = (today_date.replace(day=1) - relativedelta(months=1)).strftime("%Y-%m")
-    return {
-        "current_month": current_month,
-        "previous_month": previous_month,
-        "skipped": True,
-    }
-
-
-def ensure_future_projection_snapshot_for_month(month: str) -> Optional[dict]:
-    return None
-
-
-def get_projected_balance_value(account_id: str, month: str | None = None) -> float:
-    return calculate_projected_balance(account_id, month)['resultado']

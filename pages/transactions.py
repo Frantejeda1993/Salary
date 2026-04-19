@@ -153,9 +153,15 @@ else:
                 es_propio_fuel = st.checkbox("Gasto Propio", value=False, key="propio_fuel", help="Marca si este gasto pertenece a la cuenta seleccionada pero debería ser reembolsado desde la cuenta principal.")
 
             if monto_fuel and monto_fuel > 0 and km_done > 0 and price_per_l > 0:
-                cost_per_1km = monto_fuel / km_done
-                cost_per_100km = cost_per_1km * 100
-                st.info(f"💡 **Calculations**:\n- Cost per 1 km: {format_currency(cost_per_1km)}\n- Cost per 100 km: {format_currency(cost_per_100km)}")
+                liters = monto_fuel / price_per_l
+                cost_per_km = monto_fuel / km_done
+                l_per_100km = (liters / km_done) * 100
+                st.info(
+                    f"💡 **Calculations**:\n"
+                    f"- Litres consumed: {liters:.2f} L\n"
+                    f"- Cost per km: {format_currency(cost_per_km)}\n"
+                    f"- Consumption: {l_per_100km:.1f} L/100km"
+                )
 
             if st.form_submit_button("Save Fuel Expense"):
                 if monto_fuel is None:

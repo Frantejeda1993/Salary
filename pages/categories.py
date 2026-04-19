@@ -10,7 +10,15 @@ categories = cat_srv.get_all()
 with st.expander("Add New Category", expanded=False):
     with st.form("add_cat_form", clear_on_submit=True):
         nombre = st.text_input("Category Name")
-        tipo = st.selectbox("Type", ["normal", "extra"], help="Extra categories reduce expenses when generating extra income.")
+        tipo = st.selectbox(
+            "Type",
+            ["normal", "extra"],
+            help=(
+                "'Normal': incomes in this category act as refunds — they offset "
+                "spending for that category (e.g. expense reimbursements). "
+                "'Extra': pure additional income, does not offset any expense category."
+            ),
+        )
         submitted = st.form_submit_button("Save Category")
         
         if submitted:
@@ -27,7 +35,16 @@ def edit_category_dialog(category):
     with st.form(f"edit_cat_form_{category['id']}", clear_on_submit=False):
         nombre = st.text_input("Category Name", value=category.get("nombre", ""))
         tipo_index = 0 if category.get("tipo", "normal") == "normal" else 1
-        tipo = st.selectbox("Type", ["normal", "extra"], index=tipo_index, help="Extra categories reduce expenses when generating extra income.")
+        tipo = st.selectbox(
+            "Type",
+            ["normal", "extra"],
+            index=tipo_index,
+            help=(
+                "'Normal': incomes in this category act as refunds — they offset "
+                "spending for that category (e.g. expense reimbursements). "
+                "'Extra': pure additional income, does not offset any expense category."
+            ),
+        )
         submitted = st.form_submit_button("Update Category")
         
         if submitted:
