@@ -261,8 +261,8 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
         + all incomes (extra income)
         + transfers received
         - fixed expenses (paid + pending)
-        - active budgets (or actual if overrun) [uses RAW spending to avoid double-count]
-        - non-budgeted raw expenses
+        - active budgets (or actual if overrun) [uses NETTED spending, floor at 0]
+        - non-budgeted netted expenses
         - transfers sent
     """
     data = load_all_data()
@@ -303,8 +303,6 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
     )
 
     active_budgets = [b for b in get_active_budgets(month) if b.get("account_id") == account_id]
-    # RAW spending for calculation (spec: budget + overrun); NETTED for display (refunds reduce budget consumption)
-    raw_spending = _calculate_raw_category_expenses(month, account_id)
     netted_spending = calculate_category_spending(month, account_id)
     budget_cat_ids = {b["categoria_id"] for b in active_budgets}
 
@@ -313,10 +311,9 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
     for b in active_budgets:
         cat_id = b["categoria_id"]
         presupuesto = b["monto"]
-        raw_spent = raw_spending.get(cat_id, 0.0)
         netted_spent = netted_spending.get(cat_id, 0.0)
-        # Charge at least the budget amount; if raw spending exceeds budget, charge the overrun
-        effective = max(presupuesto, raw_spent)
+        # Charge at least the budget amount; if netted spending exceeds budget, charge the overrun
+        effective = max(presupuesto, max(netted_spent, 0.0))
         # Display: refunds free up budget room (use netted for available)
         available = presupuesto - max(netted_spent, 0.0)
         budget_impact += effective
@@ -329,10 +326,10 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
             "absorbed": 0.0,
         })
 
-    # Non-budgeted: use raw expenses (incomes are already counted in income_total)
+    # Non-budgeted: use netted expenses (incomes are already counted in income_total)
     non_budgeted = sum(
-        raw_spending.get(cat_id, 0.0)
-        for cat_id in raw_spending
+        netted_spending.get(cat_id, 0.0)
+        for cat_id in netted_spending
         if cat_id not in budget_cat_ids
     )
 
