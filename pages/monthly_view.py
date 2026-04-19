@@ -14,6 +14,7 @@ calculate_real_balance = finance_engine.calculate_real_balance
 calculate_projected_balance = finance_engine.calculate_projected_balance
 get_active_budgets = finance_engine.get_active_budgets
 calculate_category_spending = finance_engine.calculate_category_spending
+calculate_raw_category_expenses = getattr(finance_engine, "_calculate_raw_category_expenses", None)
 get_fixed_expenses_for_month = finance_engine.get_fixed_expenses_for_month
 get_propio_expenses_by_account = getattr(finance_engine, "get_propio_expenses_by_account", None)
 calculate_month_real_result = getattr(
@@ -199,7 +200,13 @@ if active_budgets:
             acc_name = "Cuenta eliminada" if b.get('account_id') else ''
 
         limit = b.get('monto', 0.0)
-        account_spending = calculate_category_spending(selected_month, b.get('account_id'))
+        # Budget projection/absorption logic uses RAW (non-netted) expenses.
+        # Keep "Used" aligned with projected internals so:
+        #   limit - used - absorbed - available = 0
+        if calculate_raw_category_expenses:
+            account_spending = calculate_raw_category_expenses(selected_month, b.get('account_id'))
+        else:
+            account_spending = calculate_category_spending(selected_month, b.get('account_id'))
         used = account_spending.get(b.get('categoria_id'), 0.0)
 
         account_id = b.get('account_id')
