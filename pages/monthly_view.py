@@ -183,23 +183,12 @@ if active_budgets:
     for a in accounts:
         proj_result = calculate_month_projected_result(a['id'], selected_month)
         account_budget_details[a['id']] = {
-            bd['categoria_id']: bd['available'] for bd in proj_result['budget_details']
+            bd['categoria_id']: {
+                'available': bd['available'],
+                'absorbed': bd['absorbed'],
+            }
+            for bd in proj_result['budget_details']
         }
-
-    # Compute second-pass absorption (from get_month_summary) to distribute across budgets
-    pre_absorcion = summary.get('resultado_proyectado_pre_absorcion', summary['resultado_proyectado'])
-    total_absorbed = max(0.0, summary['resultado_proyectado'] - pre_absorcion)
-
-    budget_absorbed = {}
-    if total_absorbed > 0:
-        total_avail = sum(
-            max(account_budget_details.get(b.get('account_id'), {}).get(b.get('categoria_id'), 0.0), 0.0)
-            for b in active_budgets
-        )
-        if total_avail > 0:
-            for b in active_budgets:
-                avail = max(account_budget_details.get(b.get('account_id'), {}).get(b.get('categoria_id'), 0.0), 0.0)
-                budget_absorbed[b['id']] = min(total_absorbed * (avail / total_avail), avail)
 
     for b in active_budgets:
         cat_name = categories.get(b.get('categoria_id'), 'Unknown Category')
@@ -215,13 +204,10 @@ if active_budgets:
 
         account_id = b.get('account_id')
         cat_id = b.get('categoria_id')
-        if account_id in account_budget_details and cat_id in account_budget_details[account_id]:
-            available = account_budget_details[account_id][cat_id]
-        else:
-            available = limit - used
-
-        absorbed = budget_absorbed.get(b['id'], 0.0)
-        true_available = available - absorbed
+        detail = account_budget_details.get(account_id, {}).get(cat_id, {})
+        available = detail.get('available', limit - used)
+        absorbed = detail.get('absorbed', 0.0)
+        true_available = available
 
         st.write(f"**{cat_name}** {f'({acc_name})' if acc_name else ''}")
         c1, c2, c3, c4 = st.columns(4)
