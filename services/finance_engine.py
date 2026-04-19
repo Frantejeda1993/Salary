@@ -342,6 +342,7 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
         - non_budgeted
         - transfers_out
     )
+    resultado_pre_absorcion = resultado
 
     # Spec rule: projected must not go negative while budgets have available capacity.
     # Absorb deficit proportionally from budgets with remaining room.
@@ -355,7 +356,11 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
                 bd["available"] -= absorption * (bd["available"] / total_available)
             resultado = resultado + absorption  # approaches 0; equals 0 if fully absorbed
 
-    return {"resultado": resultado, "budget_details": budget_details}
+    return {
+        "resultado": resultado,
+        "resultado_pre_absorcion": resultado_pre_absorcion,
+        "budget_details": budget_details,
+    }
 
 # ---------------------------------------------------------------------------
 # Remaining from previous month (simplified – no snapshots needed)
@@ -589,7 +594,9 @@ def get_month_summary(month: str) -> dict:
         )
         proj = calculate_month_projected_result(main_id, month)
         resultado_proyectado = proj["resultado"] + remaining_from_previous_month
-        resultado_proyectado_pre_absorcion = resultado_proyectado
+        resultado_proyectado_pre_absorcion = (
+            proj["resultado_pre_absorcion"] + remaining_from_previous_month
+        )
 
         # Second absorption pass: the first pass inside calculate_month_projected_result
         # only absorbed against the monthly delta. If remaining_from_previous_month is
