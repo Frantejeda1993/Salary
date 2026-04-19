@@ -248,7 +248,18 @@ def calculate_month_real_result(account_id: str, month: str) -> float:
         if t.get("cuenta_origen") == account_id and _month_of(t["fecha"]) == month
     )
 
-    return salary_total + income_total + transfers_in - expense_total - fixed_paid - transfers_out
+    total_income = salary_total + income_total + transfers_in
+    total_expense = expense_total + fixed_paid + transfers_out
+    non_budgeted_spending = 0.0
+    final_result = total_income - total_expense
+
+    print("=== REAL RESULT DEBUG ===")
+    print(f"income_total: {total_income}")
+    print(f"expense_total: {total_expense}")
+    print(f"non_budgeted_spending: {non_budgeted_spending}")
+    print(f"RESULT: {final_result}")
+
+    return final_result
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -304,6 +315,14 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
 
     active_budgets = [b for b in get_active_budgets(month) if b.get("account_id") == account_id]
     netted_spending = calculate_category_spending(month, account_id)
+    raw_spending = _calculate_raw_category_expenses(month, account_id)
+
+    all_categories = set(netted_spending.keys()) | set(raw_spending.keys())
+    for category_id in all_categories:
+        real_spend = netted_spending.get(category_id, 0.0)
+        proj_spend = raw_spending.get(category_id, 0.0)
+        if real_spend != proj_spend:
+            print(f"MISMATCH in {category_id}: real={real_spend}, projected={proj_spend}")
     budget_cat_ids = {b["categoria_id"] for b in active_budgets}
 
     budget_impact = 0.0
@@ -355,6 +374,28 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
                 bd["absorbed"] = share
                 bd["available"] -= share
             resultado = resultado + absorption  # approaches 0; equals 0 if fully absorbed
+
+    total_absorbed = sum(bd["absorbed"] for bd in budget_details)
+    total_income = salary_total + income_total + transfers_in
+    total_expense = fixed_total + budget_impact + non_budgeted + transfers_out
+
+    print("=== PROJECTED RESULT DEBUG ===")
+    print(f"income_total: {total_income}")
+    print(f"expense_total: {total_expense}")
+    print(f"non_budgeted_spending: {non_budgeted}")
+    print(f"RESULT before absorption: {resultado_pre_absorcion}")
+    print(f"total_absorbed: {total_absorbed}")
+    print(f"RESULT after absorption: {resultado}")
+
+    print("=== BUDGET DEBUG ===")
+    for bd in budget_details:
+        used = max(bd["real_spent"], 0.0)
+        print(
+            f"{bd['categoria_id']}: limit={bd['presupuesto']}, used={used}, "
+            f"absorbed={bd['absorbed']}, available={bd['available']}"
+        )
+        check = bd["presupuesto"] - used - bd["absorbed"] - bd["available"]
+        print(f"  → limit - used - absorbed - available = {check}  (should be 0)")
 
     return {
         "resultado": resultado,
