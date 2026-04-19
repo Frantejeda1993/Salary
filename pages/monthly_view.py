@@ -184,7 +184,6 @@ if active_budgets:
         proj_result = calculate_month_projected_result(a['id'], selected_month)
         account_budget_details[a['id']] = {
             bd['categoria_id']: {
-                'used': max(bd.get('real_spent', 0.0), 0.0),
                 'available': bd['available'],
                 'absorbed': bd.get('absorbed', 0.0),
             }
@@ -200,16 +199,12 @@ if active_budgets:
             acc_name = "Cuenta eliminada" if b.get('account_id') else ''
 
         limit = b.get('monto', 0.0)
+        account_spending = calculate_category_spending(selected_month, b.get('account_id'))
+        used = account_spending.get(b.get('categoria_id'), 0.0)
+
         account_id = b.get('account_id')
         cat_id = b.get('categoria_id')
         detail = account_budget_details.get(account_id, {}).get(cat_id, {})
-
-        # Keep this view aligned with projected-result math (raw category spend).
-        used = detail.get('used')
-        if used is None:
-            account_spending = calculate_category_spending(selected_month, account_id)
-            used = account_spending.get(cat_id, 0.0)
-
         available = detail.get('available', limit - used)
         absorbed = detail.get('absorbed', 0.0)
         true_available = available
