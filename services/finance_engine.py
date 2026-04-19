@@ -1,6 +1,7 @@
 from datetime import datetime
 from calendar import monthrange
 import streamlit as st
+from streamlit.logger import get_logger
 from dateutil.relativedelta import relativedelta
 from utils.date_utils import is_active_in_month, get_current_month, parse_month
 from services.data_cache import load_all_data
@@ -8,6 +9,7 @@ from services.data_cache import load_all_data
 # The earliest month for which carry-over from previous month is computed.
 # Months at or before this value receive 0 as remaining_from_previous_month.
 MIN_MANAGED_MONTH: str = "2026-02"
+logger = get_logger(__name__)
 
 
 def _as_date(value):
@@ -248,7 +250,18 @@ def calculate_month_real_result(account_id: str, month: str) -> float:
         if t.get("cuenta_origen") == account_id and _month_of(t["fecha"]) == month
     )
 
-    return salary_total + income_total + transfers_in - expense_total - fixed_paid - transfers_out
+    total_income = salary_total + income_total + transfers_in
+    total_expense = expense_total + fixed_paid + transfers_out
+    non_budgeted_spending = 0.0
+    final_result = total_income - total_expense
+
+    logger.warning("=== REAL RESULT DEBUG ===")
+    logger.warning("income_total: %s", total_income)
+    logger.warning("expense_total: %s", total_expense)
+    logger.warning("non_budgeted_spending: %s", non_budgeted_spending)
+    logger.warning("RESULT: %s", final_result)
+
+    return final_result
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -304,6 +317,19 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
 
     active_budgets = [b for b in get_active_budgets(month) if b.get("account_id") == account_id]
     netted_spending = calculate_category_spending(month, account_id)
+    raw_spending = _calculate_raw_category_expenses(month, account_id)
+
+    all_categories = set(netted_spending.keys()) | set(raw_spending.keys())
+    for category_id in all_categories:
+        real_spend = netted_spending.get(category_id, 0.0)
+        proj_spend = raw_spending.get(category_id, 0.0)
+        if real_spend != proj_spend:
+            logger.warning(
+                "MISMATCH in %s: real=%s, projected=%s",
+                category_id,
+                real_spend,
+                proj_spend,
+            )
     budget_cat_ids = {b["categoria_id"] for b in active_budgets}
 
     budget_impact = 0.0
@@ -355,6 +381,32 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
                 bd["absorbed"] = share
                 bd["available"] -= share
             resultado = resultado + absorption  # approaches 0; equals 0 if fully absorbed
+
+    total_absorbed = sum(bd["absorbed"] for bd in budget_details)
+    total_income = salary_total + income_total + transfers_in
+    total_expense = fixed_total + budget_impact + non_budgeted + transfers_out
+
+    logger.warning("=== PROJECTED RESULT DEBUG ===")
+    logger.warning("income_total: %s", total_income)
+    logger.warning("expense_total: %s", total_expense)
+    logger.warning("non_budgeted_spending: %s", non_budgeted)
+    logger.warning("RESULT before absorption: %s", resultado_pre_absorcion)
+    logger.warning("total_absorbed: %s", total_absorbed)
+    logger.warning("RESULT after absorption: %s", resultado)
+
+    logger.warning("=== BUDGET DEBUG ===")
+    for bd in budget_details:
+        used = max(bd["real_spent"], 0.0)
+        logger.warning(
+            "%s: limit=%s, used=%s, absorbed=%s, available=%s",
+            bd["categoria_id"],
+            bd["presupuesto"],
+            used,
+            bd["absorbed"],
+            bd["available"],
+        )
+        check = bd["presupuesto"] - used - bd["absorbed"] - bd["available"]
+        logger.warning("  -> limit - used - absorbed - available = %s  (should be 0)", check)
 
     return {
         "resultado": resultado,
