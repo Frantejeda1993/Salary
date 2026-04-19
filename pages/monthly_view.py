@@ -185,7 +185,7 @@ if active_budgets:
         account_budget_details[a['id']] = {
             bd['categoria_id']: {
                 'available': bd['available'],
-                'absorbed': bd['absorbed'],
+                'absorbed': bd.get('absorbed', 0.0),
             }
             for bd in proj_result['budget_details']
         }
