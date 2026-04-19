@@ -326,6 +326,7 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
             "presupuesto": presupuesto,
             "real_spent": netted_spent,
             "available": available,
+            "absorbed": 0.0,
         })
 
     # Non-budgeted: use raw expenses (incomes are already counted in income_total)
@@ -353,7 +354,9 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
             deficit = abs(resultado)
             absorption = min(deficit, total_available)
             for bd in positive_budgets:
-                bd["available"] -= absorption * (bd["available"] / total_available)
+                share = absorption * (bd["available"] / total_available)
+                bd["absorbed"] = share
+                bd["available"] -= share
             resultado = resultado + absorption  # approaches 0; equals 0 if fully absorbed
 
     return {
