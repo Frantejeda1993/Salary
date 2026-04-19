@@ -578,6 +578,7 @@ def get_month_summary(month: str) -> dict:
     resultado_proyectado = 0.0
     resultado_real_details = None
     remaining_from_previous_month = 0.0
+    resultado_proyectado_pre_absorcion = 0.0
 
     if main_acc:
         main_id = main_acc['id']
@@ -588,6 +589,7 @@ def get_month_summary(month: str) -> dict:
         )
         proj = calculate_month_projected_result(main_id, month)
         resultado_proyectado = proj["resultado"] + remaining_from_previous_month
+        resultado_proyectado_pre_absorcion = resultado_proyectado
 
         # Second absorption pass: the first pass inside calculate_month_projected_result
         # only absorbed against the monthly delta. If remaining_from_previous_month is
@@ -620,5 +622,6 @@ def get_month_summary(month: str) -> dict:
         "remaining_from_previous_month": remaining_from_previous_month,
         "resultado_real": resultado_real,
         "resultado_proyectado": resultado_proyectado,
+        "resultado_proyectado_pre_absorcion": resultado_proyectado_pre_absorcion,
         "resultado_real_details": resultado_real_details,
     }

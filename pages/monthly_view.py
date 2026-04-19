@@ -179,13 +179,27 @@ if active_budgets:
     cat_srv = FirestoreService("categories")
     categories = {c['id']: c['nombre'] for c in cat_srv.get_all()}
 
-    # Get per-account projected budget availability
     account_budget_details = {}
     for a in accounts:
         proj_result = calculate_month_projected_result(a['id'], selected_month)
         account_budget_details[a['id']] = {
             bd['categoria_id']: bd['available'] for bd in proj_result['budget_details']
         }
+
+    # Compute second-pass absorption (from get_month_summary) to distribute across budgets
+    pre_absorcion = summary.get('resultado_proyectado_pre_absorcion', summary['resultado_proyectado'])
+    total_absorbed = max(0.0, summary['resultado_proyectado'] - pre_absorcion)
+
+    budget_absorbed = {}
+    if total_absorbed > 0:
+        total_avail = sum(
+            max(account_budget_details.get(b.get('account_id'), {}).get(b.get('categoria_id'), 0.0), 0.0)
+            for b in active_budgets
+        )
+        if total_avail > 0:
+            for b in active_budgets:
+                avail = max(account_budget_details.get(b.get('account_id'), {}).get(b.get('categoria_id'), 0.0), 0.0)
+                budget_absorbed[b['id']] = min(total_absorbed * (avail / total_avail), avail)
 
     for b in active_budgets:
         cat_name = categories.get(b.get('categoria_id'), 'Unknown Category')
@@ -206,19 +220,37 @@ if active_budgets:
         else:
             available = limit - used
 
-        pct_used = min(used / limit if limit > 0 else 0, 1.0)
+        absorbed = budget_absorbed.get(b['id'], 0.0)
+        true_available = available - absorbed
 
         st.write(f"**{cat_name}** {f'({acc_name})' if acc_name else ''}")
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Limit", format_currency(limit))
         c2.metric("Used", format_currency(used))
-
-        if available < 0:
-            c3.metric("Available", format_currency(available), delta=format_currency(available), delta_color="inverse")
+        if absorbed > 0:
+            c3.metric("Absorbed", format_currency(absorbed), delta=f"-{format_currency(absorbed)}", delta_color="inverse")
+        if true_available < 0:
+            c4.metric("Available", format_currency(true_available), delta=format_currency(true_available), delta_color="inverse")
         else:
-            c3.metric("Available", format_currency(available), delta=format_currency(available), delta_color="normal")
+            c4.metric("Available", format_currency(true_available), delta=format_currency(true_available), delta_color="normal")
 
-        st.progress(pct_used)
+        # Stacked visual bar
+        if limit > 0:
+            pct_used = min(used / limit, 1.0) * 100
+            pct_absorbed = min(absorbed / limit, max(0, 1.0 - pct_used / 100)) * 100
+            pct_free = max(100 - pct_used - pct_absorbed, 0)
+
+            st.markdown(
+                f"""
+                <div style="width:100%;height:18px;border-radius:6px;overflow:hidden;display:flex;background:#3a3a3a;margin-bottom:4px;">
+                    <div style="width:{pct_used:.2f}%;background:#ff4b4b;" title="Used"></div>
+                    <div style="width:{pct_absorbed:.2f}%;background:#ff8c00;" title="Absorbed by deficit"></div>
+                    <div style="width:{pct_free:.2f}%;background:#21c354;" title="Available"></div>
+                </div>
+                <small style="color:#aaa;">🔴 Used &nbsp;&nbsp; 🟠 Covering deficit &nbsp;&nbsp; 🟢 Available</small>
+                """,
+                unsafe_allow_html=True,
+            )
         st.write("")
 else:
     st.info("No active budgets for this month.")
