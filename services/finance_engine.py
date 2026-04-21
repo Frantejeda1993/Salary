@@ -431,13 +431,14 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
 @st.cache_data(ttl=120, show_spinner=False)
 def get_remaining_from_previous_month(month: str, main_account_id: str) -> float:
     """
-    Cumulative surplus/deficit carried into `month` from all prior months.
+    Result carried over from the previous month into `month`.
 
-    - Past months (< current): real result of the immediate previous month only
-      (preserves existing behaviour for historical views).
-    - Future months (>= current): iterates every month from the current month
-      through prev_month, accumulating projected deltas correctly.
-    - Previous month is before MIN_MANAGED_MONTH -> 0.0
+    - Si el mes anterior al seleccionado es mayor o igual al mes actual
+      (escenario de vista futura):
+      month carry-over = projected result(prev) de la cuenta main - propios(prev).
+    - En otro caso:
+      month carry-over = real result(prev).
+    - Previous month is before MIN_MANAGED_MONTH → 0.0
     """
     if month <= MIN_MANAGED_MONTH:
         return 0.0
@@ -448,22 +449,12 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
 
     current_month = get_current_month()
 
-    # Historical view: keep existing single-step behaviour.
-    if prev_month < current_month:
-        return calculate_month_real_result(main_account_id, prev_month)
+    if prev_month >= current_month:
+        proj_prev = calculate_month_projected_result(main_account_id, prev_month)
+        propios = sum(get_propio_expenses_by_account(prev_month, main_account_id).values())
+        return proj_prev["resultado"] - propios
 
-    # Future view: iterate and accumulate from current month onward.
-    total = 0.0
-    itr = parse_month(current_month)
-    target = parse_month(prev_month)
-
-    while itr <= target:
-        current_itr_month = itr.strftime("%Y-%m")
-        proj = calculate_month_projected_result(main_account_id, current_itr_month)
-        total += proj["resultado"]
-        itr += relativedelta(months=1)
-
-    return total
+    return calculate_month_real_result(main_account_id, prev_month)
 
 
 # ---------------------------------------------------------------------------
