@@ -435,7 +435,7 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
 
     - Si el mes anterior al seleccionado es mayor o igual al mes actual
       (escenario de vista futura):
-      month carry-over = projected result(prev) - propios(prev).
+      month carry-over = projected result(prev) de la cuenta main - propios(prev).
     - En otro caso:
       month carry-over = real result(prev).
     - Previous month is before MIN_MANAGED_MONTH → 0.0
