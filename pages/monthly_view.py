@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
+from datetime import datetime
 from services import finance_engine
 from utils.date_utils import get_current_month, get_month_options
 from services.firestore_service import FirestoreService, clear_firestore_read_caches
@@ -159,13 +159,15 @@ if res_details:
 
             btn_key = f"transfer_propio_{acc_id}_{selected_month}"
             if col_btn.button(f"💸 Transferir {format_currency(amt)}", key=btn_key, use_container_width=True):
+                transfer_date = datetime.strptime(f"{selected_month}-01", "%Y-%m-%d").date()
                 new_trf = Transfer(
-                    fecha=date.today(),
+                    fecha=transfer_date,
                     cuenta_origen=main_id,
                     cuenta_destino=acc_id,
                     monto=amt,
                     is_loan=False,
-                    status='paid'
+                    status='paid',
+                    descripcion="Transferencia automatica gastos",
                 )
                 trf_srv.add(new_trf.to_dict())
                 clear_firestore_read_caches()
