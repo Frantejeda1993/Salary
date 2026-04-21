@@ -158,29 +158,39 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
 def get_propio_expenses_by_account(month: str, main_account_id: str) -> dict:
     """
     Returns total propio expenses by non-main account for the month.
-    Includes both fixed expenses and real expenses marked as es_propio.
+    Only includes propio fixed expenses that are still pending for the month
+    (impagado). Then discounts reimbursements already transferred from the
+    main account to each non-main account in the same month.
     """
     result = {}
 
-    # 1) Propio fixed expenses active in month
+    # 1) Pending propio fixed expenses active in month
     for fe in get_fixed_expenses_for_month(month):
         if not fe.get("es_propio", False):
             continue
+        if fe.get("estado", "impagado") != "impagado":
+            continue
         acc_id = fe.get("account_id")
         if acc_id and acc_id != main_account_id:
-            amount = fe.get("monto_pagado") if fe.get("monto_pagado") is not None else fe.get("monto", 0.0)
+            amount = fe.get("monto", 0.0)
             result[acc_id] = result.get(acc_id, 0.0) + amount
 
-    # 2) Propio real expenses in month
+    # 2) Discount only transfers created by the "Transferir" button
     data = load_all_data()
-    for exp in data["expenses"]:
-        if not exp.get("es_propio", False):
+    for trf in data["transfers"]:
+        if trf.get("cuenta_origen") != main_account_id:
             continue
-        if _month_of(exp["fecha"]) != month:
+        if trf.get("descripcion") != "Transferencia automatica gastos":
             continue
-        acc_id = exp.get("account_id")
-        if acc_id and acc_id != main_account_id:
-            result[acc_id] = result.get(acc_id, 0.0) + exp.get("monto", 0.0)
+        if _month_of(trf["fecha"]) != month:
+            continue
+        acc_id = trf.get("cuenta_destino")
+        if not acc_id or acc_id not in result:
+            continue
+        result[acc_id] = max(0.0, result.get(acc_id, 0.0) - trf.get("monto", 0.0))
+
+    # Remove zeroed accounts after reimbursements.
+    result = {acc_id: amt for acc_id, amt in result.items() if amt > 0}
 
     return result
 
@@ -423,10 +433,11 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
     """
     Result carried over from the previous month into `month`.
 
-    - month <= current month  → cumulative real balance at end of previous month.
-    - month >  current month  → cumulative projected balance at end of previous month
-                                minus gastos propios owed by main account to other
-                                accounts in that previous month.
+    - Si el mes anterior al seleccionado es mayor o igual al mes actual
+      (escenario de vista futura):
+      month carry-over = projected result(prev) - propios(prev).
+    - En otro caso:
+      month carry-over = real result(prev).
     - Previous month is before MIN_MANAGED_MONTH → 0.0
     """
     if month <= MIN_MANAGED_MONTH:
@@ -438,15 +449,12 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
 
     current_month = get_current_month()
 
-    if month <= current_month:
-        # Past / current month: authoritative real cumulative balance.
-        return calculate_real_balance(main_account_id, prev_month)
-    else:
-        # Future month: projected cumulative balance of prev month minus
-        # amounts the main account owes to other accounts (propios).
-        proj_prev = calculate_projected_balance(main_account_id, prev_month)
+    if prev_month >= current_month:
+        proj_prev = calculate_month_projected_result(main_account_id, prev_month)
         propios = sum(get_propio_expenses_by_account(prev_month, main_account_id).values())
         return proj_prev["resultado"] - propios
+
+    return calculate_month_real_result(main_account_id, prev_month)
 
 
 # ---------------------------------------------------------------------------
