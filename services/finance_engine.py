@@ -452,7 +452,11 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
     if prev_month >= current_month:
         proj_prev = calculate_month_projected_result(main_account_id, prev_month)
         propios = sum(get_propio_expenses_by_account(prev_month, main_account_id).values())
-        return proj_prev["resultado"] - propios
+        # Future carry-over must be cumulative. For example, carry-over into
+        # 2026-11 should include projected deltas from all months between the
+        # current month and 2026-10, not only 2026-10.
+        prev_carry = get_remaining_from_previous_month(prev_month, main_account_id)
+        return prev_carry + proj_prev["resultado"] - propios
 
     return calculate_month_real_result(main_account_id, prev_month)
 
