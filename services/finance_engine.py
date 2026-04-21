@@ -158,13 +158,20 @@ def get_pending_loans_for_account(account_id: str, month: str = None) -> list:
 def get_propio_expenses_by_account(month: str, main_account_id: str) -> dict:
     """
     Returns total propio expenses by non-main account for the month.
-    Includes both fixed expenses and real expenses marked as es_propio.
+    Includes:
+    - fixed expenses marked as es_propio that are already paid in the month.
+    - real expenses marked as es_propio in the month.
+
+    Excludes any amounts already reimbursed via non-loan paid transfers from
+    the main account to those non-main accounts in the same month.
     """
     result = {}
 
-    # 1) Propio fixed expenses active in month
+    # 1) Propio fixed expenses active in month (only paid instances)
     for fe in get_fixed_expenses_for_month(month):
         if not fe.get("es_propio", False):
+            continue
+        if fe.get("estado") != "pagado":
             continue
         acc_id = fe.get("account_id")
         if acc_id and acc_id != main_account_id:
@@ -182,7 +189,27 @@ def get_propio_expenses_by_account(month: str, main_account_id: str) -> dict:
         if acc_id and acc_id != main_account_id:
             result[acc_id] = result.get(acc_id, 0.0) + exp.get("monto", 0.0)
 
-    return result
+    # 3) Subtract reimbursements already transferred from main account this month.
+    # We treat any non-loan paid transfer in the month from main -> account as
+    # reimbursement toward propios.
+    if result:
+        transfers = data["transfers"]
+        for trf in transfers:
+            if trf.get("is_loan", False):
+                continue
+            if trf.get("status", "pending") != "paid":
+                continue
+            if _month_of(trf.get("fecha")) != month:
+                continue
+            if trf.get("cuenta_origen") != main_account_id:
+                continue
+            dest_id = trf.get("cuenta_destino")
+            if dest_id not in result:
+                continue
+            transferred = trf.get("monto", 0.0)
+            result[dest_id] = max(result.get(dest_id, 0.0) - transferred, 0.0)
+
+    return {acc_id: amt for acc_id, amt in result.items() if amt > 0}
 
 
 # ---------------------------------------------------------------------------
