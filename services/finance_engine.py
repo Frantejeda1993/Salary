@@ -275,7 +275,9 @@ def calculate_month_real_result(account_id: str, month: str) -> float:
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def calculate_month_projected_result(account_id: str, month: str) -> dict:
+def calculate_month_projected_result(
+    account_id: str, month: str, remaining_from_previous_month: float = 0.0
+) -> dict:
     """
     Projected P&L for a specific account and month.
 
@@ -283,6 +285,7 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
         + net salaries
         + all incomes (extra income)
         + transfers received
+        + remaining from previous month
         - fixed expenses (paid + pending)
         - active budgets (or actual if overrun) [uses RAW spending, floor at 0]
         - non-budgeted raw expenses
@@ -370,7 +373,7 @@ def calculate_month_projected_result(account_id: str, month: str) -> dict:
     )
 
     resultado = (
-        salary_total + income_total + transfers_in
+        salary_total + income_total + transfers_in + remaining_from_previous_month
         - fixed_total
         - budget_impact
         - non_budgeted
@@ -562,7 +565,7 @@ def calculate_projected_balance(account_id: str, month: str | None = None) -> di
     Cumulative projected balance = real_balance − unpaid fixed − remaining budgets.
     Uses RAW spending for budget pending calculation to be consistent with
     calculate_month_projected_result. These two functions are mathematically equivalent:
-        projected_balance(month) == month_projected_result(month) + real_balance(prev_month)
+        projected_balance(month) == month_projected_result(month, remaining=0) + real_balance(prev_month)
     """
     target_month = month or get_current_month()
     real = calculate_real_balance(account_id, target_month)
@@ -575,7 +578,6 @@ def calculate_projected_balance(account_id: str, month: str | None = None) -> di
 
     active_budgets = get_active_budgets(target_month)
     raw_spending = _calculate_raw_category_expenses(target_month, account_id)
-    netted_spending = calculate_category_spending(target_month, account_id)
 
     budget_details = []
     pending_budget_impact = 0.0
@@ -585,18 +587,18 @@ def calculate_projected_balance(account_id: str, month: str | None = None) -> di
         cat_id = b["categoria_id"]
         presupuesto = b["monto"]
         raw_spent = raw_spending.get(cat_id, 0.0)
-        netted_spent = max(netted_spending.get(cat_id, 0.0), 0.0)
-        available = presupuesto - netted_spent  # display: refunds free up room
+        effective_spent = max(raw_spent, 0.0)
+        available = presupuesto - effective_spent
         budget_details.append({
             "budget_id": b["id"],
             "categoria_id": cat_id,
             "presupuesto": presupuesto,
-            "real_spent": netted_spent,
+            "real_spent": raw_spent,
             "available": available,
         })
         # Only charge what's still unspent from the budget (raw basis)
-        if raw_spent < presupuesto:
-            pending_budget_impact += presupuesto - raw_spent
+        if effective_spent < presupuesto:
+            pending_budget_impact += presupuesto - effective_spent
 
     resultado = real - fixed_pendientes - pending_budget_impact
 
@@ -663,26 +665,11 @@ def get_month_summary(month: str) -> dict:
             calculate_month_real_result(main_id, month)
             + remaining_from_previous_month
         )
-        proj = calculate_month_projected_result(main_id, month)
-        resultado_proyectado = proj["resultado"] + remaining_from_previous_month
-        resultado_proyectado_pre_absorcion = (
-            proj["resultado_pre_absorcion"] + remaining_from_previous_month
+        proj = calculate_month_projected_result(
+            main_id, month, remaining_from_previous_month=remaining_from_previous_month
         )
-
-        # Second absorption pass: the first pass inside calculate_month_projected_result
-        # only absorbed against the monthly delta. If remaining_from_previous_month is
-        # negative it can push resultado_proyectado below zero again. Absorb that
-        # residual deficit from whatever budget capacity is still available.
-        if resultado_proyectado < 0:
-            available_capacity = sum(
-                bd["available"]
-                for bd in proj["budget_details"]
-                if bd["available"] > 0
-            )
-            if available_capacity > 0:
-                deficit = abs(resultado_proyectado)
-                absorption = min(deficit, available_capacity)
-                resultado_proyectado += absorption
+        resultado_proyectado = proj["resultado"]
+        resultado_proyectado_pre_absorcion = proj["resultado_pre_absorcion"]
 
         resultado_real_details = {
             "main_account_id": main_id,
