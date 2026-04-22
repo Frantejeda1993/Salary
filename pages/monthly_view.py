@@ -182,9 +182,15 @@ if active_budgets:
     cat_srv = FirestoreService("categories")
     categories = {c['id']: c['nombre'] for c in cat_srv.get_all()}
 
+    remaining = summary.get('remaining_from_previous_month', 0.0)
+    main_id = res_details['main_account_id'] if res_details else None
+
     account_budget_details = {}
     for a in accounts:
-        proj_result = calculate_month_projected_result(a['id'], selected_month)
+        r = remaining if (main_id and a['id'] == main_id) else 0.0
+        proj_result = calculate_month_projected_result(
+            a['id'], selected_month, remaining_from_previous_month=r
+        )
         account_budget_details[a['id']] = {
             bd['categoria_id']: {
                 'available': bd['available'],
