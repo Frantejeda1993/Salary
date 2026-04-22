@@ -389,8 +389,14 @@ def calculate_month_projected_result(
         if total_available > 0:
             deficit = abs(resultado)
             absorption = min(deficit, total_available)
-            for bd in positive_budgets:
-                share = absorption * (bd["available"] / total_available)
+            remaining_to_absorb = absorption
+            for i, bd in enumerate(positive_budgets):
+                if i == len(positive_budgets) - 1:
+                    # Ensure the absorbed shares sum exactly to absorption.
+                    share = remaining_to_absorb
+                else:
+                    share = absorption * (bd["available"] / total_available)
+                    remaining_to_absorb -= share
                 bd["absorbed"] = share
                 bd["available"] -= share
             resultado = resultado + absorption  # approaches 0; equals 0 if fully absorbed
@@ -608,8 +614,14 @@ def calculate_projected_balance(account_id: str, month: str | None = None) -> di
         if total_available > 0:
             deficit = abs(resultado)
             absorption = min(deficit, total_available)
-            for bd in budgets_with_available:
-                bd["available"] -= absorption * (bd["available"] / total_available)
+            remaining_to_absorb = absorption
+            for i, bd in enumerate(budgets_with_available):
+                if i == len(budgets_with_available) - 1:
+                    share = remaining_to_absorb
+                else:
+                    share = absorption * (bd["available"] / total_available)
+                    remaining_to_absorb -= share
+                bd["available"] -= share
             resultado = resultado + absorption
 
     return {"resultado": resultado, "budget_details": budget_details}
