@@ -116,12 +116,21 @@ def edit_transfer_dialog(tr, accounts_list, acc_opts):
             elif monto <= 0:
                 st.error("Amount must be greater than zero.")
             else:
-                trf_srv.update(tr["id"], {
+                update_data = {
                     "fecha": datetime.combine(fecha, datetime.min.time()) if fecha else None,
                     "cuenta_origen": origen['id'],
                     "cuenta_destino": destino['id'],
                     "monto": monto
-                })
+                }
+
+                if tr.get('is_loan', False):
+                    current_outstanding = float(tr.get('outstanding_amount', tr.get('monto', 0.0)))
+                    paid_amount = max(float(tr.get('monto', 0.0)) - current_outstanding, 0.0)
+                    new_outstanding = max(monto - paid_amount, 0.0)
+                    update_data["outstanding_amount"] = new_outstanding
+                    update_data["status"] = 'paid' if new_outstanding == 0 else 'pending'
+
+                trf_srv.update(tr["id"], update_data)
                 st.success("Transfer updated successfully!")
                 st.rerun()
 
