@@ -216,6 +216,53 @@ else:
                     st.success("Loan recorded successfully.")
                     st.rerun()
 
+
+
+@st.dialog("Edit Loan")
+def edit_loan_dialog(loan, acc_op):
+    with st.form(f"edit_loan_form_{loan['id']}", clear_on_submit=False):
+        st.subheader("Edit Loan")
+        acc_labels = [a['label'] for a in acc_op]
+
+        current_from = loan.get("cuenta_origen")
+        current_to = loan.get("cuenta_destino")
+        from_index = next((i for i, a in enumerate(acc_op) if a['id'] == current_from), 0)
+        to_index = next((i for i, a in enumerate(acc_op) if a['id'] == current_to), 0)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            from_label = st.selectbox("From Account", acc_labels, index=from_index)
+            selected_from = next((a for a in acc_op if a['label'] == from_label), None)
+            amount = st.number_input("Amount", value=float(loan.get('monto', 0.0)), min_value=0.0, step=10.0)
+        with col2:
+            to_label = st.selectbox("To Account", acc_labels, index=to_index)
+            selected_to = next((a for a in acc_op if a['label'] == to_label), None)
+            fecha = st.date_input("Date", value=loan.get("fecha", date.today()), format="DD/MM/YYYY")
+
+        if st.form_submit_button("Update Loan"):
+            if not selected_from or not selected_to:
+                st.error("Please select valid accounts.")
+            elif selected_from['id'] == selected_to['id']:
+                st.error("Origin and Destination accounts must be different.")
+            elif amount <= 0:
+                st.error("Amount must be greater than zero.")
+            else:
+                current_outstanding = float(loan.get('outstanding_amount', loan.get('monto', 0.0)))
+                paid_amount = max(float(loan.get('monto', 0.0)) - current_outstanding, 0.0)
+                new_outstanding = max(amount - paid_amount, 0.0)
+                new_status = 'paid' if new_outstanding == 0 else 'pending'
+
+                trf_srv.update(loan['id'], {
+                    "fecha": datetime.combine(fecha, datetime.min.time()) if fecha else None,
+                    "cuenta_origen": selected_from['id'],
+                    "cuenta_destino": selected_to['id'],
+                    "monto": amount,
+                    "outstanding_amount": new_outstanding,
+                    "status": new_status
+                })
+                st.success("Loan updated.")
+                st.rerun()
+
 @st.dialog("Edit Expense")
 def edit_expense_dialog(exp, acc_op, cat_op):
     with st.form(f"edit_exp_form_{exp['id']}", clear_on_submit=False):
@@ -457,14 +504,14 @@ pending_loans = [l for l in loans if l.get('status') == 'pending' and l.get('out
 if pending_loans:
     pending_loans.sort(key=lambda x: str(x.get('fecha', '')), reverse=True)
     
-    lc1, lc2, lc3, lc4, lc5 = st.columns([1.5, 2, 2, 1.5, 1.5])
+    lc1, lc2, lc3, lc4, lc5, lc6, lc7 = st.columns([1.3, 1.8, 1.8, 2, 1.2, 1, 1])
     lc1.write("**Date**")
     lc2.write("**From**")
     lc3.write("**To**")
     lc4.write("**Amount**")
-    
+
     for pl in pending_loans:
-        c1, c2, c3, c4, c5 = st.columns([1.5, 2, 2, 1.5, 1.5])
+        c1, c2, c3, c4, c5, c6, c7 = st.columns([1.3, 1.8, 1.8, 2, 1.2, 1, 1])
         fecha_str = str(pl.get('fecha'))[:10]
         c1.write(fecha_str)
         c2.write(acc_lookup.get(pl.get('cuenta_origen'), 'Unknown'))
@@ -482,7 +529,7 @@ if pending_loans:
             key=repay_key
         )
 
-        if c5.button("Repay", key=f"pay_loan_{pl['id']}"):
+        if c6.button("Repay", key=f"pay_loan_{pl['id']}"):
             if repay_amount <= 0:
                 st.error("Repayment amount must be greater than zero.")
             else:
@@ -504,5 +551,14 @@ if pending_loans:
                 trf_srv.add(repayment.to_dict())
                 st.success(f"Repayment recorded. Pending amount: {format_currency(new_outstanding)}")
                 st.rerun()
+
+
+        if c7.button("Edit", key=f"edit_loan_{pl['id']}"):
+            edit_loan_dialog(pl, acc_options)
+
+        if c7.button("Delete", key=f"del_loan_{pl['id']}"):
+            trf_srv.delete(pl['id'])
+            st.success("Loan deleted.")
+            st.rerun()
 else:
     st.info("No pending loans.")
