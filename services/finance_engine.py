@@ -463,19 +463,29 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
     if prev_month < current_month:
         return calculate_month_real_result(main_account_id, prev_month)
 
-    # Future view: iterate and accumulate from current month onward.
-    total = 0.0
+    # Future view: chain projected carry-over from current month onward.
+    prev_of_current_month = (parse_month(current_month) - relativedelta(months=1)).strftime("%Y-%m")
+    carry = (
+        calculate_month_real_result(main_account_id, prev_of_current_month)
+        if prev_of_current_month >= MIN_MANAGED_MONTH
+        else 0.0
+    )
+
     itr = parse_month(current_month)
     target = parse_month(prev_month)
 
     while itr <= target:
         current_itr_month = itr.strftime("%Y-%m")
-        proj = calculate_month_projected_result(main_account_id, current_itr_month)
+        proj = calculate_month_projected_result(
+            main_account_id,
+            current_itr_month,
+            remaining_from_previous_month=carry,
+        )
         propios = sum(get_propio_expenses_by_account(current_itr_month, main_account_id).values())
-        total += proj["resultado"] - propios
+        carry = proj["resultado"] - propios
         itr += relativedelta(months=1)
 
-    return total
+    return carry
 
 
 # ---------------------------------------------------------------------------
