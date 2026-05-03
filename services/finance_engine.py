@@ -458,9 +458,8 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
 
     current_month = get_current_month()
 
-    # If previous month is not in the future, carry only that month's real result.
-    # This avoids chaining prior carry-over into the next month once a month has closed.
-    if prev_month <= current_month:
+    # Historical view: keep existing single-step behaviour.
+    if prev_month < current_month:
         return calculate_month_real_result(main_account_id, prev_month)
 
     # Future view: iterate and accumulate from current month onward.
