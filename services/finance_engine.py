@@ -323,7 +323,7 @@ def calculate_month_projected_result(
     )
 
     fixed_total = sum(
-        fe["monto"]
+        (fe.get("monto_pagado") if fe.get("monto_pagado") is not None else fe["monto"])
         for fe in get_fixed_expenses_for_month(month)
         if fe.get("account_id") == account_id
     )
@@ -442,10 +442,10 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
     """
     Cumulative surplus/deficit carried into `month` from all prior months.
 
-    - Past months (< current): real result of the immediate previous month only
-      (preserves existing behaviour for historical views).
-    - Future months (>= current): iterates every month from the current month
-      through prev_month, accumulating projected deltas correctly and
+    - Past months (< current): recursively chains each closed month's displayed
+      real result, i.e. real_result(month) + carry-in to that month.
+    - Future months (>= current): starts from the chained carry into the current
+      month, then iterates projected deltas through the previous month while
       discounting "gastos propios" of non-main accounts for each month.
     - Previous month is before MIN_MANAGED_MONTH -> 0.0
     """
@@ -458,15 +458,16 @@ def get_remaining_from_previous_month(month: str, main_account_id: str) -> float
 
     current_month = get_current_month()
 
-    # If previous month already passed (< current), use only that month's real result.
-    # If previous month is current or future (>= current), keep projected chained carry-over.
+    # Past month (already closed): carry in the exact value displayed as
+    # "Resultado Real" for prev_month, including older carry-overs.
     if prev_month < current_month:
-        return calculate_month_real_result(main_account_id, prev_month)
+        prev_remaining = get_remaining_from_previous_month(prev_month, main_account_id)
+        return calculate_month_real_result(main_account_id, prev_month) + prev_remaining
 
-    # Future view: chain projected carry-over from current month onward.
+    # Current/future month: chain projected carry-over from the current month onward.
     prev_of_current_month = (parse_month(current_month) - relativedelta(months=1)).strftime("%Y-%m")
     carry = (
-        calculate_month_real_result(main_account_id, prev_of_current_month)
+        get_remaining_from_previous_month(current_month, main_account_id)
         if prev_of_current_month >= MIN_MANAGED_MONTH
         else 0.0
     )
