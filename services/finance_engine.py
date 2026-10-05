@@ -6,6 +6,8 @@ only wires it to the cached Firestore data and the real clock, and caches the
 results with st.cache_data. Function names/signatures are kept so the pages
 and the cache invalidation in firestore_service keep working unchanged.
 """
+import re
+
 import streamlit as st
 
 from services.data_cache import load_all_data
@@ -13,8 +15,22 @@ from services.finance_core import FinanceCore, MIN_MANAGED_MONTH  # noqa: F401 (
 from utils.date_utils import get_current_month
 
 
+def parse_min_managed_month(value) -> str:
+    """Validated YYYY-MM from secrets, or the code default."""
+    value = str(value or "").strip()
+    return value if re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", value) else MIN_MANAGED_MONTH
+
+
+def get_min_managed_month() -> str:
+    """Per-deployment start of the carry-over chain ([app] min_managed_month in secrets)."""
+    try:
+        return parse_min_managed_month(st.secrets.get("app", {}).get("min_managed_month"))
+    except Exception:  # no secrets file (tests, local without config)
+        return MIN_MANAGED_MONTH
+
+
 def _core() -> FinanceCore:
-    return FinanceCore(load_all_data(), get_current_month())
+    return FinanceCore(load_all_data(), get_current_month(), get_min_managed_month())
 
 
 _cached = st.cache_data(ttl=120, show_spinner=False)
@@ -113,3 +129,8 @@ def get_pending_obligations(month: str) -> list:
 @_cached
 def get_pending_loans_impact(account_id: str) -> dict:
     return _core().pending_loans_impact(account_id)
+
+
+@_cached
+def get_first_data_month() -> str | None:
+    return _core().first_data_month()

@@ -45,6 +45,25 @@ Simply run:
 streamlit run app.py
 ```
 
+## Per-deployment settings (secrets)
+
+Besides the `[firebase]` credentials, each deployment can set:
+
+```toml
+[app]
+min_managed_month = "2026-02"   # first month of the carry-over chain (YYYY-MM)
+```
+
+Months at or before it start with no carry-over. Set it to the month you start
+recording data. Invalid or missing values fall back to `2026-02`.
+
+## Sharing the app with someone else
+
+Each person needs **their own deployment with their own Firebase project**: the
+app is single-user and has no login, so two people on one deployment see and
+edit the same data. Ideally they fork the repo and deploy from their own
+Streamlit account, so their service-account key lives only in their secrets.
+
 ## Deploying to Streamlit Cloud
 
 1. Push this entire repository to GitHub.

@@ -20,8 +20,9 @@ from dateutil.relativedelta import relativedelta
 from models.salary import normalize_deductions
 from utils.date_utils import is_active_in_month, parse_month
 
-# The earliest month for which carry-over from previous month is computed.
-# Months at or before this value receive 0 as remaining_from_previous_month.
+# Default first month of the carry-over chain: months at or before it receive 0
+# as remaining_from_previous_month. Each deployment can override it with
+# [app] min_managed_month = "YYYY-MM" in its Streamlit secrets.
 MIN_MANAGED_MONTH: str = "2026-02"
 
 AUTO_TRANSFER_DESCRIPTION = "Transferencia automatica gastos"
@@ -620,6 +621,17 @@ class FinanceCore:
         return {"resultado": resultado, "budget_details": details}
 
     # ----- dashboard helpers ------------------------------------------------
+
+    @_memo
+    def first_data_month(self) -> str | None:
+        """Earliest month with any recorded data (None if there is none)."""
+        months = [month_of(x["fecha_inicio"])
+                  for coll in ("salaries", "fixed_expenses", "budgets")
+                  for x in self.data[coll] if x.get("fecha_inicio")]
+        months += [month_of(x["fecha"])
+                   for coll in ("expenses", "incomes", "transfers")
+                   for x in self.data[coll] if x.get("fecha")]
+        return min(months) if months else None
 
     @_memo
     def pending_obligations(self, month: str) -> list[dict]:
