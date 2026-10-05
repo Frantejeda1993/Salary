@@ -1,7 +1,7 @@
 import streamlit as st
 from datetime import date, datetime
 from services.firestore_service import FirestoreService
-from models.salary import Salary
+from models.salary import Salary, normalize_deductions
 from models.overtime import Overtime
 from services.finance_engine import calculate_salary_net
 from utils.date_utils import get_current_month
@@ -120,15 +120,7 @@ def edit_salary_dialog(salary, acc_options):
             
         st.subheader("Deductions (%)")
         
-        current_deductions = salary.get("deductions")
-        if not current_deductions:
-            current_deductions = [
-                {"name": "Cont. Común", "percentage": float(salary.get("cont_comun", 15.0)) / 100.0, "applies_to_extras": bool(salary.get("cont_comun_aplica_extras", True))},
-                {"name": "MEI", "percentage": float(salary.get("mei", 0.1)) / 100.0, "applies_to_extras": bool(salary.get("mei_aplica_extras", True))},
-                {"name": "Formación", "percentage": float(salary.get("formacion", 0.1)) / 100.0, "applies_to_extras": bool(salary.get("formacion_aplica_extras", True))},
-                {"name": "Desempleo", "percentage": float(salary.get("desempleo", 0.1)) / 100.0, "applies_to_extras": bool(salary.get("desempleo_aplica_extras", True))},
-                {"name": "IRPF", "percentage": float(salary.get("irpf", 0.0)) / 100.0, "applies_to_extras": bool(salary.get("irpf_aplica_extras", True))},
-            ]
+        current_deductions = normalize_deductions(salary)
             
         edited_deductions = st.data_editor(
             current_deductions,

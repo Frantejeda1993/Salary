@@ -11,7 +11,6 @@ class Expense:
     bank_id: str
     account_id: str
     id: Optional[str] = None
-    es_propio: bool = False
     created_at: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> dict:
@@ -22,7 +21,6 @@ class Expense:
             "categoria_id": self.categoria_id,
             "bank_id": self.bank_id,
             "account_id": self.account_id,
-            "es_propio": self.es_propio,
             "created_at": self.created_at
         }
 
@@ -40,6 +38,5 @@ class Expense:
             categoria_id=data.get('categoria_id', ''),
             bank_id=data.get('bank_id', ''),
             account_id=data.get('account_id', ''),
-            es_propio=data.get('es_propio', False),
             created_at=data.get('created_at', datetime.now())
         )

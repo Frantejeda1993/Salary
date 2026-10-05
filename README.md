@@ -30,7 +30,15 @@ You must have a Firebase/Google Cloud project with Firestore enabled.
 1. Rename `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`.
 2. Open the file and copy the values from your downloaded JSON credential file into the corresponding fields in the `[firebase]` section. Pay special attention to formatting the `private_key` correctly with `\n` characters for newlines.
 
-### 4. Running Locally
+### 4. Running the tests
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+All business logic lives in `services/finance_core.py` (pure Python, no Streamlit/Firestore),
+so every rule can be tested with in-memory data. `services/finance_engine.py` only adds caching.
+
+### 5. Running Locally
 Simply run:
 ```bash
 streamlit run app.py

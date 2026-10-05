@@ -2,6 +2,45 @@ from dataclasses import dataclass, field
 from datetime import datetime, date
 from typing import Optional
 
+# Legacy schema (before configurable deductions): one numeric field per
+# deduction, stored as a percentage (15.0 == 15 %), plus an "_aplica_extras" flag.
+LEGACY_DEDUCTION_FIELDS = [
+    # (display name, value key, applies-to-extras key, default %)
+    ("Cont. Común", "cont_comun", "cont_comun_aplica_extras", 15.0),
+    ("MEI", "mei", "mei_aplica_extras", 0.1),
+    ("Formación", "formacion", "formacion_aplica_extras", 0.1),
+    ("Desempleo", "desempleo", "desempleo_aplica_extras", 0.1),
+    ("IRPF", "irpf", "irpf_aplica_extras", 0.0),
+]
+
+
+def normalize_deductions(data: dict) -> list[dict]:
+    """
+    Single source of truth for a salary's deductions.
+
+    New schema: data["deductions"] = [{"name", "percentage" (0-1), "applies_to_extras"}].
+    Legacy schema (no "deductions" key at all): built from the old per-field values.
+    An explicit empty list means "no deductions" and is respected, even if old
+    legacy fields are still present in the document (Firestore update() is partial).
+    Used by the model, the finance engine and the Salaries page, so what is shown
+    is exactly what is calculated.
+    """
+    deductions = data.get("deductions")
+    if deductions is not None:
+        return list(deductions)
+    if not any(key in data for _, key, _, _ in LEGACY_DEDUCTION_FIELDS):
+        # Neither schema present: genuinely no deductions configured.
+        return []
+    return [
+        {
+            "name": name,
+            "percentage": float(data.get(val_key, default_val)) / 100.0,
+            "applies_to_extras": bool(data.get(extra_key, True)),
+        }
+        for name, val_key, extra_key, default_val in LEGACY_DEDUCTION_FIELDS
+    ]
+
+
 @dataclass
 class Salary:
     nombre: str
@@ -36,22 +75,7 @@ class Salary:
         if f_fin and isinstance(f_fin, datetime):
             f_fin = f_fin.date()
 
-        deductions = data.get('deductions')
-        if deductions is None:
-            deductions = []
-            old_mapping = [
-                ("Cont. Común", "cont_comun", "cont_comun_aplica_extras", 15.0),
-                ("MEI", "mei", "mei_aplica_extras", 0.1),
-                ("Formación", "formacion", "formacion_aplica_extras", 0.1),
-                ("Desempleo", "desempleo", "desempleo_aplica_extras", 0.1),
-                ("IRPF", "irpf", "irpf_aplica_extras", 0.0),
-            ]
-            for name, val_key, extra_key, default_val in old_mapping:
-                deductions.append({
-                    "name": name,
-                    "percentage": float(data.get(val_key, default_val)) / 100.0,
-                    "applies_to_extras": bool(data.get(extra_key, False))
-                })
+        deductions = normalize_deductions(data)
 
         return cls(
             id=doc_id,
