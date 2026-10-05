@@ -41,3 +41,18 @@ def test_pending_loans_impact_both_directions():
         {"id": "d", "cuenta_origen": "sec", "cuenta_destino": "main", "monto": 50.0, "fecha": d(2026, 3, 1)},
     ]
     assert FinanceCore(data, "2026-04").pending_loans_impact("main") == {"debes": 300.0, "te_deben": 100.0, "neto": -200.0}
+
+
+def test_first_data_month():
+    data = empty_data()
+    assert FinanceCore(data, "2026-04").first_data_month() is None
+    data["salaries"] = [{"id": "s", "fecha_inicio": d(2026, 3, 1)}]
+    data["expenses"] = [{"id": "e", "fecha": d(2025, 11, 5), "monto": 1.0, "categoria_id": "x"}]
+    assert FinanceCore(data, "2026-04").first_data_month() == "2025-11"
+
+
+def test_min_managed_month_from_secrets_is_validated():
+    from services.finance_engine import parse_min_managed_month, MIN_MANAGED_MONTH
+    assert parse_min_managed_month("2025-09") == "2025-09"
+    for bad in (None, "", "2025-9", "2025-13", "sept"):
+        assert parse_min_managed_month(bad) == MIN_MANAGED_MONTH
