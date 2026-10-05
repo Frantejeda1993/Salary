@@ -18,7 +18,9 @@ SEED = {
  "banks": [{"id": "bk", "nombre": "Banco"}],
  "categories": [{"id": "food", "nombre": "Food", "tipo": "normal"}],
  "salaries": [{"id": "s1", "nombre": "Job", "account_id": "main", "bank_id": "bk", "salario_bruto": 2000.0,
-               "fecha_inicio": datetime(2026, 1, 1), "fecha_fin": None, "deductions": []}],
+               "fecha_inicio": datetime(2026, 1, 1), "fecha_fin": None, "deductions": [],
+               "revisiones": [{"desde": prev, "salario_bruto": 2200.0, "cobro_desde": cur}]}],
+ "overtimes": [{"id": "ot1", "salary_id": "s1", "monto_bruto": 150.0, "mes_aplicacion": cur}],
  "fixed_expenses": [{"id": "rent", "nombre": "Alquiler", "account_id": "main", "bank_id": "bk",
                      "monto": 700.0, "fecha_inicio": datetime(2026, 1, 1), "fecha_fin": None,
                      "revisiones": [{"desde": cur, "monto": 750.0}]}],
@@ -93,3 +95,15 @@ def test_fixed_expense_change_amount_and_safe_delete():
     assert not at.exception
     labels = [b.label for b in at.button]
     assert "Finalizar" in labels and "Borrar igualmente" in labels  # paid history -> offers end, not plain delete
+
+
+def test_salaries_page_shows_raise_overtime_and_breakdown():
+    at = _run("salaries")
+    labels = [e.label for e in at.expander]
+    assert "Horas extra (1)" in labels and "Historial salarial" in labels and "Detalle mensual" in labels
+    assert any("2.200,00" in m.value for m in at.markdown)        # current gross reflects the raise
+    next(b for b in at.button if b.label == "Subida salarial").click().run()
+    assert not at.exception and any(b.label == "Aplicar subida" for b in at.button)
+    at = _run("salaries")
+    next(b for b in at.button if b.label == "Editar").click().run()
+    assert not at.exception and any(b.label == "Guardar" for b in at.button)

@@ -98,3 +98,8 @@ def get_credit_groups() -> list:
 @_cached
 def calculate_credit_outstanding(account_id: str, month: str, reserved_only: bool = True) -> float:
     return _core().credit_outstanding(account_id, month, reserved_only)
+
+
+@_cached
+def get_salary_breakdown(salary_id: str, month: str) -> dict:
+    return _core().salary_breakdown(salary_id, month)

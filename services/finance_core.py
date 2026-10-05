@@ -233,26 +233,65 @@ class FinanceCore:
         )
 
     # ----- salaries --------------------------------------------------------
+    # Raises live in salary["revisiones"]: [{"desde": "YYYY-MM", "salario_bruto": x,
+    #                                        "cobro_desde": "YYYY-MM" (optional)}]
+    # "desde" = month the new gross is owed from; "cobro_desde" = first month it is
+    # actually paid (later than "desde" -> retroactive: the arrears are paid then).
+
+    def _salary(self, salary_id: str) -> dict | None:
+        return next((s for s in self.data["salaries"] if s.get("id") == salary_id), None)
+
+    @staticmethod
+    def _gross_owed(salary: dict, month: str, known_at: str) -> float:
+        """Gross owed for `month`, counting only raises already being paid by `known_at`."""
+        gross = salary.get("salario_bruto", 0.0)
+        for rev in sorted(salary.get("revisiones") or [], key=lambda r: r["desde"]):
+            if rev["desde"] <= month and (rev.get("cobro_desde") or rev["desde"]) <= known_at:
+                gross = rev["salario_bruto"]
+        return gross
 
     @_memo
-    def salary_net(self, salary_id: str, month: str) -> float:
-        """Net salary for the month: gross + overtime - deductions."""
-        salary = next((s for s in self.data["salaries"] if s.get("id") == salary_id), None)
+    def _gross_cumulative(self, salary_id: str, up_to: str, known_at: str) -> float:
+        salary = self._salary(salary_id)
+        m, total = month_of(salary["fecha_inicio"]), 0.0
+        while m <= up_to:
+            if _active(salary, m):
+                total += self._gross_owed(salary, m, known_at)
+            m = add_months(m, 1)
+        return total
+
+    @_memo
+    def salary_breakdown(self, salary_id: str, month: str) -> dict:
+        """Gross paid in `month` split into base and arrears, plus overtime, deductions and net."""
+        salary = self._salary(salary_id)
         if not salary:
-            return 0.0
-        bruto = salary.get("salario_bruto", 0.0)
+            return {"base": 0.0, "atrasos": 0.0, "horas_extra": 0.0, "deducciones": 0.0, "neto": 0.0}
+        if salary.get("revisiones"):
+            base = self._gross_owed(salary, month, month)
+            prev = add_months(month, -1)
+            paid = self._gross_cumulative(salary_id, month, month) - self._gross_cumulative(salary_id, prev, prev)
+            atrasos = paid - base if _active(salary, month) else 0.0
+        else:
+            base, atrasos = salary.get("salario_bruto", 0.0), 0.0
         overtime = sum(
             ot.get("monto_bruto", 0.0)
             for ot in self.data["overtimes"]
             if ot.get("salary_id") == salary_id and ot.get("mes_aplicacion") == month
         )
-        total_deductions = sum(
-            (bruto + (overtime if d.get("applies_to_extras", False) else 0.0))
+        # Arrears are salary: same deductions as the base.
+        deducciones = sum(
+            (base + atrasos + (overtime if d.get("applies_to_extras", False) else 0.0))
             * float(d.get("percentage", 0.0))
             for d in normalize_deductions(salary)
             if d.get("name")
         )
-        return bruto + overtime - total_deductions
+        return {"base": base, "atrasos": atrasos, "horas_extra": overtime,
+                "deducciones": deducciones, "neto": base + atrasos + overtime - deducciones}
+
+    @_memo
+    def salary_net(self, salary_id: str, month: str) -> float:
+        """Net salary for the month: gross (incl. arrears) + overtime - deductions."""
+        return self.salary_breakdown(salary_id, month)["neto"]
 
     # ----- month building blocks -------------------------------------------
 
