@@ -27,3 +27,17 @@ def test_pending_obligations_collects_every_kind():
     tipos = {(o["tipo"], o["monto"]) for o in FinanceCore(data, "2026-04").pending_obligations("2026-04")}
     assert tipos == {("Gasto fijo", 700.0), ("Tarjeta", 120.0), ("Préstamo", 150.0)}
     # gym is paid in April -> not pending, and its propio reimbursement only applies while unpaid
+
+
+def test_pending_loans_impact_both_directions():
+    data = empty_data()
+    data["transfers"] = [
+        {"id": "a", "cuenta_origen": "sec", "cuenta_destino": "main", "monto": 500.0, "fecha": d(2026, 2, 1),
+         "is_loan": True, "status": "pending", "outstanding_amount": 300.0},
+        {"id": "b", "cuenta_origen": "main", "cuenta_destino": "sec", "monto": 100.0, "fecha": d(2026, 3, 1),
+         "is_loan": True, "status": "pending"},                                   # no outstanding -> full amount
+        {"id": "c", "cuenta_origen": "sec", "cuenta_destino": "main", "monto": 900.0, "fecha": d(2026, 3, 1),
+         "is_loan": True, "status": "paid", "outstanding_amount": 0.0},
+        {"id": "d", "cuenta_origen": "sec", "cuenta_destino": "main", "monto": 50.0, "fecha": d(2026, 3, 1)},
+    ]
+    assert FinanceCore(data, "2026-04").pending_loans_impact("main") == {"debes": 300.0, "te_deben": 100.0, "neto": -200.0}

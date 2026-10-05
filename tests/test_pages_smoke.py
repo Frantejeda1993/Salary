@@ -14,7 +14,8 @@ from services.finance_core import add_months
 cur = get_current_month(); prev = add_months(cur, -1)
 y, m = map(int, prev.split("-"))
 SEED = {
- "accounts": [{"id": "main", "nombre": "Main", "is_main": True, "saldo_inicial": 0.0, "bank_id": "bk"}],
+ "accounts": [{"id": "main", "nombre": "Main", "is_main": True, "saldo_inicial": 0.0, "bank_id": "bk"},
+              {"id": "sec", "nombre": "Sec", "is_main": False, "saldo_inicial": 0.0, "bank_id": "bk"}],
  "banks": [{"id": "bk", "nombre": "Banco"}],
  "categories": [{"id": "food", "nombre": "Food", "tipo": "normal"}],
  "salaries": [{"id": "s1", "nombre": "Job", "account_id": "main", "bank_id": "bk", "salario_bruto": 2000.0,
@@ -23,7 +24,11 @@ SEED = {
  "overtimes": [{"id": "ot1", "salary_id": "s1", "monto_bruto": 150.0, "mes_aplicacion": cur}],
  "fixed_expenses": [{"id": "rent", "nombre": "Alquiler", "account_id": "main", "bank_id": "bk",
                      "monto": 700.0, "fecha_inicio": datetime(2026, 1, 1), "fecha_fin": None,
-                     "revisiones": [{"desde": cur, "monto": 750.0}]}],
+                     "revisiones": [{"desde": cur, "monto": 750.0}]},
+                    {"id": "old", "nombre": "Viejo", "account_id": "main", "bank_id": "bk", "monto": 10.0,
+                     "fecha_inicio": datetime(2025, 1, 1), "fecha_fin": datetime(2025, 6, 30)}],
+ "transfers": [{"id": "loan1", "cuenta_origen": "sec", "cuenta_destino": "main", "monto": 400.0,
+                "fecha": datetime(2026, 1, 10), "is_loan": True, "status": "pending", "outstanding_amount": 250.0}],
  "fixed_expense_instances": [{"id": "i1", "fixed_expense_id": "rent", "mes": prev, "estado": "pagado", "monto": None}],
  "expenses": [{"id": "cc1", "nombre": "TV", "account_id": "main", "bank_id": "bk", "categoria_id": "food",
                "monto": 300.0, "fecha": datetime(y, m, 20), "metodo_pago": "credito",
@@ -88,7 +93,7 @@ def test_fixed_expense_change_amount_and_safe_delete():
     # check the dialogs open with the right options; the writes are trivial updates.
     at = _run("fixed_expenses")
     assert any("750,00" in m.value for m in at.markdown)          # current amount uses the revision
-    next(b for b in at.button if b.label == "Cambiar importe").click().run()
+    next(b for b in at.button if b.label == "Cambiar importe/cuenta").click().run()
     assert not at.exception and any(b.label == "Aplicar" for b in at.button)
     at = _run("fixed_expenses")
     next(b for b in at.button if b.label == "Delete").click().run()
@@ -115,4 +120,23 @@ def test_dashboard_sections_and_pending():
     assert any(x.startswith("Este mes") for x in subs) and "Pendiente este mes" in subs \
         and "Hacia dónde vas" in subs
     pending = at.dataframe[0].value
-    assert set(pending["Tipo"]) == {"Gasto fijo", "Tarjeta"}
+    assert set(pending["Tipo"]) == {"Gasto fijo", "Tarjeta", "Préstamo"}
+
+
+def test_fixed_expenses_hides_finished_and_reaches_old_months():
+    at = _run("fixed_expenses")
+    names = " ".join(m.value for m in at.markdown)
+    assert "Viejo" not in names                                    # finished -> hidden by default
+    assert at.toggle[0].label == "Mostrar finalizados (1)"
+    at.toggle[0].set_value(True).run()
+    assert any("Viejo" in m.value for m in at.markdown)
+    assert "2025-01" in next(sb for sb in at.selectbox if sb.label == "Select Month").options                    # history back to the oldest expense
+    next(b for b in at.button if b.label == "Cambiar importe/cuenta").click().run()
+    assert not at.exception
+    assert any(sb.label == "Cuenta de cargo" for sb in at.selectbox)
+
+
+def test_monthly_view_shows_projection_if_loans_settled():
+    at = _run("monthly_view")
+    line = next(m.value for m in at.markdown if "Si se saldan los préstamos" in m.value)
+    assert "devuelves 250,00" in line
