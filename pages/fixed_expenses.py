@@ -5,6 +5,8 @@ from services.finance_engine import get_fixed_expenses_for_month
 from utils.date_utils import get_current_month, format_month, get_month_options
 from models.fixed_expense import FixedExpense, FixedExpenseInstance
 from utils.money_utils import format_currency
+from services.finance_core import fixed_amount_for_month
+from calendar import monthrange
 
 st.title("📆 Fixed Expenses Management")
 
@@ -157,7 +159,9 @@ def edit_fe_dialog(fe, acc_options):
         
         with col1:
             nombre = st.text_input("Expense Name", value=fe.get("nombre", ""))
-            monto = st.number_input("Monthly Amount", value=float(fe.get("monto", 0.0)), step=100.0)
+            monto = st.number_input("Importe inicial", value=float(fe.get("monto", 0.0)), step=100.0,
+                                    help="Corrige el importe desde el inicio (todo el histórico). "
+                                         "Para una subida a partir de un mes usa 'Cambiar importe' en la lista.")
             
             current_acc_id = fe.get("account_id")
             acc_labels = [a['label'] for a in acc_options]
@@ -193,22 +197,98 @@ def edit_fe_dialog(fe, acc_options):
             else:
                 st.error("Please fill in the expense name.")
 
+def _month_end(month: str) -> datetime:
+    y, m = map(int, month.split("-"))
+    return datetime(y, m, monthrange(y, m)[1])
+
+
+@st.dialog("Eliminar gasto fijo")
+def delete_fe_dialog(fe):
+    paid = [i for i in fei_srv.get_by_field("fixed_expense_id", "==", fe["id"]) if i.get("estado") == "pagado"]
+    if paid:
+        st.warning(
+            f"**{fe['nombre']}** tiene {len(paid)} pago(s) registrados. Si lo borras, esos pagos dejan de "
+            "contar y **cambian tus saldos reales y el arrastre de todos los meses pasados**."
+        )
+        st.write("Lo normal es **finalizarlo**: deja de aplicarse a partir del mes siguiente y conserva la historia.")
+        months = get_month_options()
+        last = st.selectbox("Último mes en que se paga", months, index=months.index(get_current_month()))
+        if st.button("Finalizar", type="primary", width="stretch"):
+            fe_srv.update(fe["id"], {"fecha_fin": _month_end(last)})
+            st.rerun()
+        st.divider()
+        confirm = st.checkbox("Entiendo que borrar altera el histórico")
+        if st.button("Borrar igualmente", disabled=not confirm, width="stretch"):
+            fe_srv.delete(fe["id"])
+            st.rerun()
+    else:
+        st.write(f"¿Borrar **{fe['nombre']}**? No tiene pagos registrados, así que no altera saldos pasados.")
+        if st.button("Borrar", type="primary", width="stretch"):
+            fe_srv.delete(fe["id"])
+            st.rerun()
+
+
+@st.dialog("Cambiar importe")
+def change_amount_dialog(fe):
+    st.write(f"**{fe['nombre']}**: el nuevo importe se aplica desde el mes elegido. Los meses anteriores no cambian.")
+    months = get_month_options()
+    desde = st.selectbox("A partir de", months, index=months.index(get_current_month()))
+    actual = fixed_amount_for_month(fe, desde)
+    nuevo = st.number_input("Nuevo importe mensual", value=float(actual), step=10.0)
+    if actual:
+        st.caption(f"Antes {format_currency(actual)} → variación {((nuevo - actual) / actual) * 100:+.1f} %")
+    if st.button("Aplicar", type="primary", width="stretch"):
+        revs = [r for r in (fe.get("revisiones") or []) if r["desde"] != desde]
+        revs.append({"desde": desde, "monto": float(nuevo)})
+        fe_srv.update(fe["id"], {"revisiones": sorted(revs, key=lambda r: r["desde"])})
+        st.rerun()
+
+
+def _history_rows(fe):
+    start = str(fe.get("fecha_inicio"))[:7]
+    rows, prev = [{"Desde": start, "Importe": fe.get("monto", 0.0), "Variación": ""}], fe.get("monto", 0.0)
+    for r in sorted(fe.get("revisiones") or [], key=lambda r: r["desde"]):
+        var = f"{((r['monto'] - prev) / prev) * 100:+.1f} %" if prev else ""
+        rows.append({"Desde": r["desde"], "Importe": r["monto"], "Variación": var})
+        prev = r["monto"]
+    return rows
+
+
 st.divider()
 st.subheader("All Fixed Expenses Definition")
 all_fe = fe_srv.get_all()
 if all_fe:
+    current_m = get_current_month()
     for fe in all_fe:
-        c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 1, 1])
-        c1.write(f"**{fe['nombre']}**")
-        c2.write(format_currency(fe['monto']))
-        
-        start_d = str(fe.get('fecha_inicio'))[:10]
-        end_d = str(fe.get('fecha_fin'))[:10] if fe.get('fecha_fin') else 'Ongoing'
-        c3.write(f"Period: {start_d} to {end_d}")
-        
-        if c4.button("Edit", key=f"edit_fe_{fe['id']}"):
-            edit_fe_dialog(fe, acc_options)
-        if c5.button("Delete", key=f"del_fe_{fe['id']}"):
-            fe_srv.delete(fe['id'])
-            # Also potentially delete instances, but kept simple here
-            st.rerun()
+        with st.container(border=True):
+            c1, c2, c3, c4, c5, c6 = st.columns([3, 2, 3, 1.4, 1, 1])
+            c1.write(f"**{fe['nombre']}**")
+            revs = fe.get("revisiones") or []
+            c2.write(format_currency(fixed_amount_for_month(fe, current_m)))
+            if revs:
+                c2.caption(f"Inicial {format_currency(fe.get('monto', 0.0))} · {len(revs)} cambio(s)")
+
+            start_d = str(fe.get('fecha_inicio'))[:10]
+            end_d = str(fe.get('fecha_fin'))[:10] if fe.get('fecha_fin') else 'Ongoing'
+            c3.write(f"Period: {start_d} to {end_d}")
+
+            if c4.button("Cambiar importe", key=f"chg_fe_{fe['id']}"):
+                change_amount_dialog(fe)
+            if c5.button("Edit", key=f"edit_fe_{fe['id']}"):
+                edit_fe_dialog(fe, acc_options)
+            if c6.button("Delete", key=f"del_fe_{fe['id']}"):
+                delete_fe_dialog(fe)
+
+            if revs:
+                with st.expander("Historial de importes"):
+                    rows = _history_rows(fe)
+                    st.dataframe(
+                        [{**r, "Importe": format_currency(r["Importe"])} for r in rows],
+                        hide_index=True, width="stretch",
+                    )
+                    for r in sorted(revs, key=lambda r: r["desde"]):
+                        if st.button(f"Quitar cambio de {r['desde']}", key=f"rmrev_{fe['id']}_{r['desde']}"):
+                            fe_srv.update(fe["id"], {"revisiones": [x for x in revs if x["desde"] != r["desde"]]})
+                            st.rerun()
+else:
+    st.info("No fixed expenses defined.")

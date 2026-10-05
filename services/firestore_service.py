@@ -107,6 +107,10 @@ def _clear_firestore_caches():
         fe.calculate_projected_balance.clear()
         fe.get_month_summary.clear()
         fe.get_propio_expenses_by_account.clear()
+        fe.get_credit_groups.clear()
+        fe.get_salary_breakdown.clear()
+        fe.get_pending_obligations.clear()
+        fe.calculate_credit_outstanding.clear()
     except Exception:
         pass
 

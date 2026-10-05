@@ -19,6 +19,7 @@ def load_all_data() -> dict:
         "fixed_expenses": FirestoreService("fixed_expenses").get_all(),
         "fixed_expense_instances": FirestoreService("fixed_expense_instances").get_all(),
         "monthly_account_snapshots": FirestoreService("monthly_account_snapshots").get_all(),
+        "credit_settlements": FirestoreService("credit_settlements").get_all(),
     }
 
 

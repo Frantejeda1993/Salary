@@ -7,6 +7,7 @@ A comprehensive, single-user personal finance management application built with 
 - **Monthly View**: Detailed breakdown of Income, Fixed Expenses, Budgets, Real Expenses, and Extra Incomes.
 - **Dashboard**: High-level snapshot with visual cash flow charts and real-time budget tracking.
 - **Dynamic Entities**: Fully functional management of Banks, Accounts, Categories, Salaries (including complex tax deductions), Budgets, and Fixed Expenses.
+- **Credit card purchases**: reserved in the projection (purchase month or charge month), hit Real only when the debt is settled from the Monthly View.
 - **Real & Projected Balances**: Seamlessly differentiate between your actual money in the bank vs what your balance will look like after paying upcoming obligations.
 
 ## Setup Instructions
@@ -30,7 +31,15 @@ You must have a Firebase/Google Cloud project with Firestore enabled.
 1. Rename `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`.
 2. Open the file and copy the values from your downloaded JSON credential file into the corresponding fields in the `[firebase]` section. Pay special attention to formatting the `private_key` correctly with `\n` characters for newlines.
 
-### 4. Running Locally
+### 4. Running the tests
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+All business logic lives in `services/finance_core.py` (pure Python, no Streamlit/Firestore),
+so every rule can be tested with in-memory data. `services/finance_engine.py` only adds caching.
+
+### 5. Running Locally
 Simply run:
 ```bash
 streamlit run app.py
