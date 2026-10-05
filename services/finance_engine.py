@@ -108,3 +108,8 @@ def get_salary_breakdown(salary_id: str, month: str) -> dict:
 @_cached
 def get_pending_obligations(month: str) -> list:
     return _core().pending_obligations(month)
+
+
+@_cached
+def get_pending_loans_impact(account_id: str) -> dict:
+    return _core().pending_loans_impact(account_id)

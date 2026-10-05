@@ -74,15 +74,29 @@ def accrual_month(exp: dict) -> str:
 
 
 # ----- versioned amounts ----------------------------------------------------
-# Fixed expenses keep their history in "revisiones": [{"desde": "YYYY-MM", "monto": x}].
-# The base "monto" applies from fecha_inicio until the first revision.
+# Fixed expenses keep their history in "revisiones":
+#   [{"desde": "YYYY-MM", "monto": x?, "account_id": id?, "bank_id": id?}]
+# Each revision changes only the fields it carries (amount, debit account or both).
+# The base "monto"/"account_id" apply from fecha_inicio until a revision changes them.
+
+def _fe_field_for_month(fe: dict, field: str, month: str, default=None):
+    value = fe.get(field, default)
+    for rev in sorted(fe.get("revisiones") or [], key=lambda r: r["desde"]):
+        if rev["desde"] <= month and rev.get(field) is not None:
+            value = rev[field]
+    return value
+
 
 def fixed_amount_for_month(fe: dict, month: str) -> float:
-    amount = fe.get("monto", 0.0)
-    for rev in sorted(fe.get("revisiones") or [], key=lambda r: r["desde"]):
-        if rev["desde"] <= month:
-            amount = rev["monto"]
-    return amount
+    return _fe_field_for_month(fe, "monto", month, 0.0)
+
+
+def fixed_account_for_month(fe: dict, month: str) -> str | None:
+    return _fe_field_for_month(fe, "account_id", month)
+
+
+def fixed_bank_for_month(fe: dict, month: str) -> str | None:
+    return _fe_field_for_month(fe, "bank_id", month)
 
 
 def _active(item: dict, month: str) -> bool:
@@ -314,6 +328,8 @@ class FinanceCore:
             inst = next((i for i in instances_by_fe.get(fe["id"], []) if i.get("mes") == month), None)
             res = dict(fe)
             res["monto"] = fixed_amount_for_month(fe, month)
+            res["account_id"] = fixed_account_for_month(fe, month)
+            res["bank_id"] = fixed_bank_for_month(fe, month)
             res["estado"] = inst.get("estado") if inst else "impagado"
             res["monto_pagado"] = inst.get("monto") if inst else None
             result.append(res)
@@ -557,10 +573,13 @@ class FinanceCore:
             if st_.get("account_id") == account_id and as_date(st_["fecha"]) <= cutoff
         )
 
-        fes = {fe["id"]: fe for fe in self.data["fixed_expenses"] if fe.get("account_id") == account_id}
+        # The debit account can change over time: attribute each payment to the
+        # account the expense was debited from in *that* month.
+        fes = {fe["id"]: fe for fe in self.data["fixed_expenses"]}
         for inst in self.data["fixed_expense_instances"]:
             fe = fes.get(inst.get("fixed_expense_id"))
-            if fe and inst.get("estado") == "pagado" and inst.get("mes", "") <= target_month:
+            if (fe and inst.get("estado") == "pagado" and inst.get("mes", "") <= target_month
+                    and fixed_account_for_month(fe, inst["mes"]) == account_id):
                 balance -= (inst.get("monto") if inst.get("monto") is not None
                             else fixed_amount_for_month(fe, inst["mes"]))
 
@@ -625,6 +644,26 @@ class FinanceCore:
                             "account_id": main["id"],
                             "monto": loan.get("outstanding_amount", loan.get("monto", 0.0))})
         return out
+
+    @_memo
+    def pending_loans_impact(self, account_id: str) -> dict:
+        """
+        Outstanding loans involving `account_id`, from its point of view:
+          debes    = loans it received and still has to repay (repaying subtracts)
+          te_deben = loans it gave and is still owed (being repaid adds)
+        """
+        debes = te_deben = 0.0
+        for t in self.data["transfers"]:
+            if not t.get("is_loan") or t.get("status", "pending") != "pending":
+                continue
+            outstanding = t.get("outstanding_amount", t.get("monto", 0.0))
+            if outstanding <= 0:
+                continue
+            if t.get("cuenta_destino") == account_id:
+                debes += outstanding
+            elif t.get("cuenta_origen") == account_id:
+                te_deben += outstanding
+        return {"debes": debes, "te_deben": te_deben, "neto": te_deben - debes}
 
     @staticmethod
     def budget_pace(used: float, limit: float, day: int, days_in_month: int) -> dict:

@@ -110,6 +110,7 @@ def _clear_firestore_caches():
         fe.get_credit_groups.clear()
         fe.get_salary_breakdown.clear()
         fe.get_pending_obligations.clear()
+        fe.get_pending_loans_impact.clear()
         fe.calculate_credit_outstanding.clear()
     except Exception:
         pass

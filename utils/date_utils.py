@@ -46,3 +46,12 @@ def is_active_in_month(fecha_inicio: date, fecha_fin: date, month_str: str) -> b
                    (fecha_fin.year == month_date.year and fecha_fin.month >= month_date.month)
                    
     return end_is_valid
+
+
+def month_range(start: str, end: str) -> list:
+    """All months from `start` to `end` inclusive, as YYYY-MM strings."""
+    months, d, last = [], parse_month(start), parse_month(end)
+    while d <= last:
+        months.append(d.strftime("%Y-%m"))
+        d += relativedelta(months=1)
+    return months

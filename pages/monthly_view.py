@@ -20,6 +20,7 @@ calculate_raw_category_expenses = getattr(finance_engine, "_calculate_raw_catego
 get_fixed_expenses_for_month = finance_engine.get_fixed_expenses_for_month
 get_credit_groups = finance_engine.get_credit_groups
 calculate_credit_outstanding = finance_engine.calculate_credit_outstanding
+get_pending_loans_impact = finance_engine.get_pending_loans_impact
 get_propio_expenses_by_account = getattr(finance_engine, "get_propio_expenses_by_account", None)
 calculate_month_real_result = getattr(
     finance_engine,
@@ -118,6 +119,15 @@ with rc2:
         main_name = res_details['main_account_name']
         main_proj = summary["resultado_proyectado"]
         st.success(f"### Resultado Proyectado ({main_name})\n# {format_currency(main_proj)}")
+        loans = get_pending_loans_impact(res_details['main_account_id'])
+        if loans["debes"] or loans["te_deben"]:
+            parts = []
+            if loans["debes"]:
+                parts.append(f"devuelves {format_currency(loans['debes'])}")
+            if loans["te_deben"]:
+                parts.append(f"te devuelven {format_currency(loans['te_deben'])}")
+            st.markdown(f"Si se saldan los préstamos pendientes: **{format_currency(main_proj + loans['neto'])}** "
+                        f"<small>({' · '.join(parts)})</small>", unsafe_allow_html=True)
         carried_cc = summary.get("deuda_tarjeta_arrastrada", 0.0)
         if carried_cc:
             st.caption(f"💳 Incluye {format_currency(carried_cc)} de tarjeta reservados en meses anteriores, aún por saldar.")
