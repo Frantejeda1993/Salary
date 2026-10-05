@@ -4,7 +4,7 @@ from datetime import datetime
 
 EMPTY = ["accounts", "banks", "salaries", "overtimes", "expenses", "incomes", "transfers",
          "categories", "budgets", "fixed_expenses", "fixed_expense_instances",
-         "monthly_account_snapshots"]
+         "monthly_account_snapshots", "credit_settlements"]
 
 
 def empty_data() -> dict:

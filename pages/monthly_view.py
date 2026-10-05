@@ -5,6 +5,8 @@ from services import finance_engine
 from utils.date_utils import get_current_month, get_month_options
 from services.firestore_service import FirestoreService, clear_firestore_read_caches
 from models.transfer import Transfer
+from models.credit_settlement import CreditSettlement
+from services.finance_core import month_of
 from utils.money_utils import format_currency
 
 
@@ -16,6 +18,8 @@ get_active_budgets = finance_engine.get_active_budgets
 calculate_category_spending = finance_engine.calculate_category_spending
 calculate_raw_category_expenses = getattr(finance_engine, "_calculate_raw_category_expenses", None)
 get_fixed_expenses_for_month = finance_engine.get_fixed_expenses_for_month
+get_credit_groups = finance_engine.get_credit_groups
+calculate_credit_outstanding = finance_engine.calculate_credit_outstanding
 get_propio_expenses_by_account = getattr(finance_engine, "get_propio_expenses_by_account", None)
 calculate_month_real_result = getattr(
     finance_engine,
@@ -114,6 +118,9 @@ with rc2:
         main_name = res_details['main_account_name']
         main_proj = summary["resultado_proyectado"]
         st.success(f"### Resultado Proyectado ({main_name})\n# {format_currency(main_proj)}")
+        carried_cc = summary.get("deuda_tarjeta_arrastrada", 0.0)
+        if carried_cc:
+            st.caption(f"💳 Incluye {format_currency(carried_cc)} de tarjeta reservados en meses anteriores, aún por saldar.")
     else:
         st.success(f"### Resultado Proyectado\n# {format_currency(summary['resultado_proyectado'])}")
 
@@ -172,6 +179,75 @@ if res_details:
                 trf_srv.add(new_trf.to_dict())
                 clear_firestore_read_caches()
                 st.success(f"Transferencia de {format_currency(amt)} registrada hacia {acc_name}.")
+                st.rerun()
+
+# ---------------------------------------------------------------------------
+# Tarjetas de crédito
+# ---------------------------------------------------------------------------
+credit_groups = get_credit_groups()
+if credit_groups:
+    acc_by_id = {a['id']: a for a in accounts}
+    current_month = get_current_month()
+    settle_srv = FirestoreService("credit_settlements")
+
+    def _acc_label(acc_id):
+        acc = acc_by_id.get(acc_id, {})
+        return f"{bank_lookup.get(acc.get('bank_id'), '')} - {acc.get('nombre', 'Cuenta eliminada')}"
+
+    bought = {}
+    for g in credit_groups:
+        for e in g["items"]:
+            if month_of(e["fecha"]) == selected_month:
+                k = (g["account_id"], g["mes_cargo"])
+                bought[k] = bought.get(k, 0.0) + e.get("monto", 0.0)
+
+    to_settle = [
+        g for g in credit_groups
+        if g["mes_cargo"] <= selected_month and (
+            g["settlement"] is None or month_of(g["settlement"]["fecha"]) == selected_month
+        )
+    ]
+
+    if bought or to_settle:
+        st.divider()
+        st.subheader("💳 Tarjetas de crédito")
+
+    if bought:
+        st.write("**Compras a crédito este mes** (deuda que se cobrará más adelante)")
+        for (acc_id, mes_cargo), amt in sorted(bought.items(), key=lambda x: x[0][1]):
+            st.write(f"- {_acc_label(acc_id)}: **{format_currency(amt)}** → se cobra en {mes_cargo}")
+
+    if to_settle:
+        st.write("**Deuda de tarjeta a saldar**")
+        for g in to_settle:
+            col_name, col_amt, col_btn = st.columns([3, 2, 2])
+            late = " ⏰ atrasada" if g["mes_cargo"] < selected_month and g["settlement"] is None else ""
+            col_name.write(f"**{_acc_label(g['account_id'])}** · cargo {g['mes_cargo']}{late}")
+            col_amt.write(f"-{format_currency(g['total'])}")
+            key = f"cc_{g['account_id']}_{g['mes_cargo']}_{selected_month}"
+            settlement = g["settlement"]
+            if settlement:
+                if abs(settlement.get("monto", 0.0) - g["total"]) > 0.005:
+                    st.warning(
+                        f"Saldado {format_currency(settlement.get('monto', 0.0))} pero las compras suman "
+                        f"{format_currency(g['total'])}. Deshaz y vuelve a saldar si has editado alguna compra."
+                    )
+                if col_btn.button("✅ Saldado · deshacer", key=key, use_container_width=True):
+                    settle_srv.delete(settlement["id"])
+                    clear_firestore_read_caches()
+                    st.rerun()
+            elif selected_month > current_month:
+                col_btn.write("🕓 Pendiente")
+            elif col_btn.button(f"Saldar {format_currency(g['total'])}", key=key, use_container_width=True):
+                fecha_cargo = (
+                    datetime.now().date() if selected_month == current_month
+                    else datetime.strptime(f"{selected_month}-01", "%Y-%m-%d").date()
+                )
+                settle_srv.add(CreditSettlement(
+                    account_id=g["account_id"], mes_cargo=g["mes_cargo"],
+                    fecha=fecha_cargo, monto=g["total"],
+                ).to_dict())
+                clear_firestore_read_caches()
                 st.rerun()
 
 st.divider()
@@ -310,6 +386,7 @@ if accounts:
         for a in bank_accounts:
             real_bal = calculate_real_balance(a['id'], selected_month)
             proj_bal = calculate_projected_balance(a['id'], selected_month)['resultado']
+            card_debt = calculate_credit_outstanding(a['id'], selected_month, False)
             subtotal_real += real_bal
             subtotal_proj += proj_bal
 
@@ -318,6 +395,7 @@ if accounts:
                 "Cuenta": a.get('nombre'),
                 "Saldo Real (Current)": format_currency(real_bal),
                 "Saldo Proyectado": format_currency(proj_bal),
+                "Tarjeta": format_currency(-card_debt) if card_debt else "—",
             })
 
         acc_data.append({
@@ -325,6 +403,7 @@ if accounts:
             "Cuenta": "---",
             "Saldo Real (Current)": format_currency(subtotal_real),
             "Saldo Proyectado": format_currency(subtotal_proj),
+            "Tarjeta": "",
         })
 
     df = pd.DataFrame(acc_data)

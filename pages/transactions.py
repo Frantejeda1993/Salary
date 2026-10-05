@@ -6,6 +6,7 @@ from models.income import Income
 from models.fuel_expense import FuelExpense
 from models.transfer import Transfer
 from utils.money_utils import format_currency
+from utils.credit_ui import credit_inputs, credit_fields
 
 st.title("💸 Transactions (Real)")
 refresh_col, _ = st.columns([1, 5])
@@ -80,7 +81,8 @@ else:
                 fecha = st.date_input("Date", value=date.today(), format="DD/MM/YYYY")
                 categoria_label = st.selectbox("Category", cat_labels if cat_labels else ["None"])
                 selected_cat = next((c for c in cat_options if c['label'] == categoria_label), None)
-                
+            cc_is, cc_off, cc_res = credit_inputs("add_exp")
+
             if st.form_submit_button("Save Expense"):
                 if monto is None:
                     st.error("Please enter a valid amount.")
@@ -94,7 +96,7 @@ else:
                     categoria_id=selected_cat['id'] if selected_cat else '',
                     bank_id=selected_acc['bank_id'], account_id=selected_acc['id']
                 )
-                    exp_srv.add(new_exp.to_dict())
+                    exp_srv.add({**new_exp.to_dict(), **credit_fields(fecha, cc_is, cc_off, cc_res)})
                     st.success("Expense logged.")
                     st.rerun()
 
@@ -148,6 +150,7 @@ else:
                 selected_acc_fuel = next((a for a in acc_options if a['label'] == account_fuel_label), None)
                 categoria_fuel_label = st.selectbox("Category", cat_labels if cat_labels else ["None"], key="cf")
                 selected_cat_fuel = next((c for c in cat_options if c['label'] == categoria_fuel_label), None)
+            fuel_cc_is, fuel_cc_off, fuel_cc_res = credit_inputs("add_fuel")
 
             if monto_fuel and monto_fuel > 0 and km_done > 0 and price_per_l > 0:
                 liters = monto_fuel / price_per_l
@@ -174,7 +177,8 @@ else:
                     bank_id=selected_acc_fuel['bank_id'], account_id=selected_acc_fuel['id'],
                     km_done=km_done, price_per_l=price_per_l
                 )
-                    exp_srv.add(new_fuel_exp.to_dict())
+                    exp_srv.add({**new_fuel_exp.to_dict(),
+                                 **credit_fields(fecha_fuel, fuel_cc_is, fuel_cc_off, fuel_cc_res)})
                     st.success("Fuel Expense logged.")
                     st.rerun()
 
@@ -291,7 +295,12 @@ def edit_expense_dialog(exp, acc_op, cat_op):
                 cat_index = 0 if "None" in cat_names else -1
             
             categoria_nombre = st.selectbox("Category", cat_names, index=max(0, cat_index))
-            
+
+        cc_is, cc_off, cc_res = credit_inputs(f"edit_{exp['id']}", exp)
+        if exp.get("metodo_pago") == "credito":
+            st.caption("⚠️ Si esta deuda ya está saldada, cambiar importe o mes de cargo la descuadra "
+                       "con el cobro registrado (la Vista Mensual te lo avisará).")
+
         is_fuel = exp.get("fuel_expense", False)
         if is_fuel:
             st.subheader("Fuel Details")
@@ -314,7 +323,8 @@ def edit_expense_dialog(exp, acc_op, cat_op):
                 update_payload = {
                     "nombre": nombre, "fecha": datetime.combine(fecha, datetime.min.time()) if fecha else None, "monto": monto,
                     "categoria_id": next((c['id'] for c in cat_op if c['label'] == categoria_nombre), ''),
-                    "bank_id": selected_acc['bank_id'], "account_id": selected_acc['id']
+                    "bank_id": selected_acc['bank_id'], "account_id": selected_acc['id'],
+                    **credit_fields(fecha, cc_is, cc_off, cc_res),
                 }
                 
                 if is_fuel:
@@ -443,6 +453,8 @@ for tx in filtered_tx[:50]:  # Limit to 50
     
     is_fuel = tx.get('fuel_expense', False)
     display_type = "Fuel Exp." if is_fuel else tx['type']
+    if tx.get("metodo_pago") == "credito":
+        display_type += f" 💳 → {tx.get('mes_cargo', '')}"
     
     c1.markdown(f":{color}[{display_type}]")
     fecha_str = str(tx.get('fecha'))[:10]

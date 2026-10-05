@@ -31,7 +31,8 @@ def _clear(mod):
 
 def _close(a, b):
     if isinstance(a, dict):
-        return a.keys() == b.keys() and all(_close(a[k], b[k]) for k in a)
+        # new code may add keys; every legacy key must match
+        return set(b) <= set(a) and all(_close(a[k], b[k]) for k in b)
     if isinstance(a, list):
         return len(a) == len(b) and all(_close(x, y) for x, y in zip(a, b))
     if isinstance(a, float) or isinstance(b, float):

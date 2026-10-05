@@ -7,6 +7,7 @@ A comprehensive, single-user personal finance management application built with 
 - **Monthly View**: Detailed breakdown of Income, Fixed Expenses, Budgets, Real Expenses, and Extra Incomes.
 - **Dashboard**: High-level snapshot with visual cash flow charts and real-time budget tracking.
 - **Dynamic Entities**: Fully functional management of Banks, Accounts, Categories, Salaries (including complex tax deductions), Budgets, and Fixed Expenses.
+- **Credit card purchases**: reserved in the projection (purchase month or charge month), hit Real only when the debt is settled from the Monthly View.
 - **Real & Projected Balances**: Seamlessly differentiate between your actual money in the bank vs what your balance will look like after paying upcoming obligations.
 
 ## Setup Instructions

@@ -88,3 +88,13 @@ def calculate_projected_balance(account_id: str, month: str | None = None) -> di
 @_cached
 def get_month_summary(month: str) -> dict:
     return _core().month_summary(month)
+
+
+@_cached
+def get_credit_groups() -> list:
+    return _core().credit_groups()
+
+
+@_cached
+def calculate_credit_outstanding(account_id: str, month: str, reserved_only: bool = True) -> float:
+    return _core().credit_outstanding(account_id, month, reserved_only)

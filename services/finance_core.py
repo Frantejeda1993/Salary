@@ -47,6 +47,32 @@ def add_months(month: str, n: int) -> str:
     return (parse_month(month) + relativedelta(months=n)).strftime("%Y-%m")
 
 
+# ----- credit card purchases ---------------------------------------------
+# An expense with metodo_pago == "credito" is a card purchase:
+#   - mes_cargo   : month the bank charges it (default: purchase month + 1)
+#   - reservar_en : "compra" -> reserved in the purchase month's projection/budgets
+#                   "cargo"  -> paid with the charge month's salary: belongs to that
+#                               month for projection and budgets
+# Cash (Real) is only affected when the debt is settled: one credit_settlements
+# document per (account_id, mes_cargo), dated when the bank actually charged it.
+
+def is_credit(exp: dict) -> bool:
+    return exp.get("metodo_pago") == "credito"
+
+
+def charge_month(exp: dict) -> str:
+    return exp.get("mes_cargo") or add_months(month_of(exp["fecha"]), 1)
+
+
+def reserve_month(exp: dict) -> str:
+    return charge_month(exp) if exp.get("reservar_en") == "cargo" else month_of(exp["fecha"])
+
+
+def accrual_month(exp: dict) -> str:
+    """Month an expense counts for projections and budgets."""
+    return reserve_month(exp) if is_credit(exp) else month_of(exp["fecha"])
+
+
 def _active(item: dict, month: str) -> bool:
     start = as_date(item["fecha_inicio"])
     end = as_date(item["fecha_fin"]) if item.get("fecha_fin") else None
@@ -101,6 +127,84 @@ class FinanceCore:
         self._cache: dict = {}
 
     # ----- lookups ---------------------------------------------------------
+
+    @property
+    def _settlements(self) -> dict:
+        if "_settlements" not in self._cache:
+            self._cache["_settlements"] = {
+                (st_["account_id"], st_["mes_cargo"]): st_
+                for st_ in self.data.get("credit_settlements", [])
+            }
+        return self._cache["_settlements"]
+
+    def settled_month(self, exp: dict) -> str | None:
+        """Month in which the card debt containing `exp` was settled (None = pending)."""
+        st_ = self._settlements.get((exp.get("account_id"), charge_month(exp)))
+        return month_of(st_["fecha"]) if st_ else None
+
+    def _credit_expenses(self, account_id: str) -> list:
+        return [e for e in self.data["expenses"] if is_credit(e) and e.get("account_id") == account_id]
+
+    def _cash_expenses(self) -> list:
+        return [e for e in self.data["expenses"] if not is_credit(e)]
+
+    @_memo
+    def credit_debt_carried_into(self, account_id: str, month: str) -> float:
+        """
+        Card debt reserved in an earlier month that the projection of `month` must
+        still charge. Only for months <= current: their carry-over is cash (Real of
+        closed months), which never saw these purchases. Future months chain the
+        projection itself, which already reserved them -> nothing to add (no double count).
+        """
+        if month > self.current_month:
+            return 0.0
+        total = 0.0
+        for e in self._credit_expenses(account_id):
+            if reserve_month(e) >= month:
+                continue
+            settled = self.settled_month(e)
+            if settled is None or settled >= month:
+                total += e.get("monto", 0.0)
+        return total
+
+    @_memo
+    def credit_outstanding(self, account_id: str, month: str, reserved_only: bool = True) -> float:
+        """
+        Unsettled card debt at the end of `month`.
+        reserved_only=True : only purchases already reserved (reserve month <= month),
+                             used by the projected balance.
+        reserved_only=False: everything bought up to `month` -> the card's balance.
+        """
+        total = 0.0
+        for e in self._credit_expenses(account_id):
+            ref = reserve_month(e) if reserved_only else month_of(e["fecha"])
+            if ref > month:
+                continue
+            settled = self.settled_month(e)
+            if settled is None or settled > month:
+                total += e.get("monto", 0.0)
+        return total
+
+    def credit_groups(self) -> list[dict]:
+        """Card debts grouped by (account, charge month), with settlement status."""
+        groups: dict = {}
+        for e in self.data["expenses"]:
+            if not is_credit(e):
+                continue
+            key = (e.get("account_id"), charge_month(e))
+            g = groups.setdefault(key, {"account_id": key[0], "mes_cargo": key[1],
+                                        "total": 0.0, "items": [],
+                                        "settlement": self._settlements.get(key)})
+            g["total"] += e.get("monto", 0.0)
+            g["items"].append(e)
+        return sorted(groups.values(), key=lambda g: (g["mes_cargo"], g["account_id"] or ""))
+
+    def _settlements_in(self, account_id: str, month: str) -> float:
+        return sum(
+            st_.get("monto", 0.0)
+            for st_ in self.data.get("credit_settlements", [])
+            if st_.get("account_id") == account_id and month_of(st_["fecha"]) == month
+        )
 
     def _salaries_for(self, account_id: str, month: str) -> float:
         return sum(
@@ -173,7 +277,7 @@ class FinanceCore:
             incomes = [i for i in incomes if i.get("account_id") == account_id]
         spending: dict = {}
         for exp in expenses:
-            if month_of(exp["fecha"]) == month:
+            if accrual_month(exp) == month:
                 cat_id = exp["categoria_id"]
                 spending[cat_id] = spending.get(cat_id, 0.0) + exp.get("monto", 0.0)
         categories = {c.get("id"): c for c in self.data["categories"]}
@@ -192,7 +296,7 @@ class FinanceCore:
         for exp in self.data["expenses"]:
             if account_id and exp.get("account_id") != account_id:
                 continue
-            if month_of(exp["fecha"]) == month:
+            if accrual_month(exp) == month:
                 cat_id = exp.get("categoria_id", "")
                 raw[cat_id] = raw.get(cat_id, 0.0) + exp.get("monto", 0.0)
         return raw
@@ -239,7 +343,8 @@ class FinanceCore:
 
     @_memo
     def month_real_result(self, account_id: str, month: str) -> float:
-        """Cash-basis result of one account in one month (no carry-over)."""
+        """Cash-basis result of one account in one month (no carry-over).
+        Card purchases don't count; their settlement does, in the month it's paid."""
         income = (
             self._salaries_for(account_id, month)
             + self._sum_in_month("incomes", "account_id", account_id, month)
@@ -250,8 +355,13 @@ class FinanceCore:
             for fe in self.fixed_expenses_for_month(month)
             if fe.get("account_id") == account_id and fe["estado"] == "pagado"
         )
+        cash_expenses = sum(
+            e["monto"] for e in self._cash_expenses()
+            if e.get("account_id") == account_id and month_of(e["fecha"]) == month
+        )
         expense = (
-            self._sum_in_month("expenses", "account_id", account_id, month)
+            cash_expenses
+            + self._settlements_in(account_id, month)
             + fixed_paid
             + self._sum_in_month("transfers", "cuenta_origen", account_id, month)
         )
@@ -266,6 +376,8 @@ class FinanceCore:
             - active budgets (max(budget, raw spent))
             - non-budgeted raw expenses
             - transfers out
+            - card debt reserved in a closed month and still relevant this month
+              (see credit_debt_carried_into)
         then a negative result is absorbed by budgets with room left.
         """
         income = (
@@ -298,12 +410,16 @@ class FinanceCore:
         budget_cats = {b["categoria_id"] for b in budgets}
         non_budgeted = sum(v for cat, v in raw.items() if cat not in budget_cats)
 
+        credit_carried = self.credit_debt_carried_into(account_id, month)
+
         pre = (
             income + remaining_from_previous_month
             - fixed_total - budget_impact - non_budgeted - transfers_out
+            - credit_carried
         )
         resultado = _absorb_deficit(pre, details, track_absorbed=True)
-        return {"resultado": resultado, "resultado_pre_absorcion": pre, "budget_details": details}
+        return {"resultado": resultado, "resultado_pre_absorcion": pre, "budget_details": details,
+                "deuda_tarjeta_arrastrada": credit_carried}
 
     @_memo
     def remaining_from_previous_month(self, month: str, main_account_id: str) -> float:
@@ -380,7 +496,14 @@ class FinanceCore:
         balance = account.get("saldo_inicial", 0.0)
         balance += self.historical_salary_incomes(account_id, target_month)
         balance += upto("incomes", "account_id")
-        balance -= upto("expenses", "account_id")
+        balance -= sum(
+            e.get("monto", 0.0) for e in self._cash_expenses()
+            if e.get("account_id") == account_id and as_date(e["fecha"]) <= cutoff
+        )
+        balance -= sum(
+            st_.get("monto", 0.0) for st_ in self.data.get("credit_settlements", [])
+            if st_.get("account_id") == account_id and as_date(st_["fecha"]) <= cutoff
+        )
 
         fes = {fe["id"]: fe for fe in self.data["fixed_expenses"] if fe.get("account_id") == account_id}
         for inst in self.data["fixed_expense_instances"]:
@@ -419,7 +542,9 @@ class FinanceCore:
             })
             if effective < b["monto"]:
                 pending_budget += b["monto"] - effective
-        resultado = _absorb_deficit(real - fixed_pending - pending_budget, details, track_absorbed=False)
+        credit_pending = self.credit_outstanding(account_id, target_month, True)
+        resultado = _absorb_deficit(real - fixed_pending - pending_budget - credit_pending,
+                                    details, track_absorbed=False)
         return {"resultado": resultado, "budget_details": details}
 
     # ----- summary ---------------------------------------------------------
@@ -449,6 +574,7 @@ class FinanceCore:
                 "resultado_real": self.month_real_result(main_id, month) + carry,
                 "resultado_proyectado": proj["resultado"],
                 "resultado_proyectado_pre_absorcion": proj["resultado_pre_absorcion"],
+                "deuda_tarjeta_arrastrada": proj["deuda_tarjeta_arrastrada"],
                 "resultado_real_details": {
                     "main_account_id": main_id,
                     "main_account_name": main.get("nombre", "Main"),
