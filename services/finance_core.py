@@ -73,6 +73,18 @@ def accrual_month(exp: dict) -> str:
     return reserve_month(exp) if is_credit(exp) else month_of(exp["fecha"])
 
 
+# ----- versioned amounts ----------------------------------------------------
+# Fixed expenses keep their history in "revisiones": [{"desde": "YYYY-MM", "monto": x}].
+# The base "monto" applies from fecha_inicio until the first revision.
+
+def fixed_amount_for_month(fe: dict, month: str) -> float:
+    amount = fe.get("monto", 0.0)
+    for rev in sorted(fe.get("revisiones") or [], key=lambda r: r["desde"]):
+        if rev["desde"] <= month:
+            amount = rev["monto"]
+    return amount
+
+
 def _active(item: dict, month: str) -> bool:
     start = as_date(item["fecha_inicio"])
     end = as_date(item["fecha_fin"]) if item.get("fecha_fin") else None
@@ -262,6 +274,7 @@ class FinanceCore:
                 continue
             inst = next((i for i in instances_by_fe.get(fe["id"], []) if i.get("mes") == month), None)
             res = dict(fe)
+            res["monto"] = fixed_amount_for_month(fe, month)
             res["estado"] = inst.get("estado") if inst else "impagado"
             res["monto_pagado"] = inst.get("monto") if inst else None
             result.append(res)
@@ -509,7 +522,8 @@ class FinanceCore:
         for inst in self.data["fixed_expense_instances"]:
             fe = fes.get(inst.get("fixed_expense_id"))
             if fe and inst.get("estado") == "pagado" and inst.get("mes", "") <= target_month:
-                balance -= inst.get("monto") if inst.get("monto") is not None else fe.get("monto", 0.0)
+                balance -= (inst.get("monto") if inst.get("monto") is not None
+                            else fixed_amount_for_month(fe, inst["mes"]))
 
         balance -= upto("transfers", "cuenta_origen")
         balance += upto("transfers", "cuenta_destino")

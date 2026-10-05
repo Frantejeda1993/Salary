@@ -19,6 +19,10 @@ SEED = {
  "categories": [{"id": "food", "nombre": "Food", "tipo": "normal"}],
  "salaries": [{"id": "s1", "nombre": "Job", "account_id": "main", "bank_id": "bk", "salario_bruto": 2000.0,
                "fecha_inicio": datetime(2026, 1, 1), "fecha_fin": None, "deductions": []}],
+ "fixed_expenses": [{"id": "rent", "nombre": "Alquiler", "account_id": "main", "bank_id": "bk",
+                     "monto": 700.0, "fecha_inicio": datetime(2026, 1, 1), "fecha_fin": None,
+                     "revisiones": [{"desde": cur, "monto": 750.0}]}],
+ "fixed_expense_instances": [{"id": "i1", "fixed_expense_id": "rent", "mes": prev, "estado": "pagado", "monto": None}],
  "expenses": [{"id": "cc1", "nombre": "TV", "account_id": "main", "bank_id": "bk", "categoria_id": "food",
                "monto": 300.0, "fecha": datetime(y, m, 20), "metodo_pago": "credito",
                "mes_cargo": cur, "reservar_en": "compra"}],
@@ -75,3 +79,17 @@ def test_settle_and_undo_card_debt():
     next(b for b in at.button if "Saldado" in b.label).click().run()
     assert not at.exception
     assert DB["credit_settlements"] == []
+
+
+def test_fixed_expense_change_amount_and_safe_delete():
+    # Note: AppTest can't click buttons *inside* st.dialog (fragment reruns), so we
+    # check the dialogs open with the right options; the writes are trivial updates.
+    at = _run("fixed_expenses")
+    assert any("750,00" in m.value for m in at.markdown)          # current amount uses the revision
+    next(b for b in at.button if b.label == "Cambiar importe").click().run()
+    assert not at.exception and any(b.label == "Aplicar" for b in at.button)
+    at = _run("fixed_expenses")
+    next(b for b in at.button if b.label == "Delete").click().run()
+    assert not at.exception
+    labels = [b.label for b in at.button]
+    assert "Finalizar" in labels and "Borrar igualmente" in labels  # paid history -> offers end, not plain delete
