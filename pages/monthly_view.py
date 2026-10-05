@@ -42,7 +42,7 @@ if calculate_month_real_result is None or calculate_month_projected_result is No
 st.title("📅 Monthly View Breakdown")
 refresh_col, _ = st.columns([1, 5])
 with refresh_col:
-    if st.button("🔄 Refresh Data", use_container_width=True):
+    if st.button("🔄 Refresh Data", width="stretch"):
         clear_firestore_read_caches()
         st.rerun()
 
@@ -165,7 +165,7 @@ if res_details:
             col_amt.write(format_currency(amt))
 
             btn_key = f"transfer_propio_{acc_id}_{selected_month}"
-            if col_btn.button(f"💸 Transferir {format_currency(amt)}", key=btn_key, use_container_width=True):
+            if col_btn.button(f"💸 Transferir {format_currency(amt)}", key=btn_key, width="stretch"):
                 transfer_date = datetime.strptime(f"{selected_month}-01", "%Y-%m-%d").date()
                 new_trf = Transfer(
                     fecha=transfer_date,
@@ -232,13 +232,13 @@ if credit_groups:
                         f"Saldado {format_currency(settlement.get('monto', 0.0))} pero las compras suman "
                         f"{format_currency(g['total'])}. Deshaz y vuelve a saldar si has editado alguna compra."
                     )
-                if col_btn.button("✅ Saldado · deshacer", key=key, use_container_width=True):
+                if col_btn.button("✅ Saldado · deshacer", key=key, width="stretch"):
                     settle_srv.delete(settlement["id"])
                     clear_firestore_read_caches()
                     st.rerun()
             elif selected_month > current_month:
                 col_btn.write("🕓 Pendiente")
-            elif col_btn.button(f"Saldar {format_currency(g['total'])}", key=key, use_container_width=True):
+            elif col_btn.button(f"Saldar {format_currency(g['total'])}", key=key, width="stretch"):
                 fecha_cargo = (
                     datetime.now().date() if selected_month == current_month
                     else datetime.strptime(f"{selected_month}-01", "%Y-%m-%d").date()
@@ -359,7 +359,7 @@ if fixed_expenses:
             "Debit Account": debit_account,
         })
 
-    st.dataframe(pd.DataFrame(fixed_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(fixed_rows), width="stretch", hide_index=True)
 
     paid_count = sum(1 for fe in fixed_expenses if fe.get('estado') == 'pagado')
     pending_count = len(fixed_expenses) - paid_count
@@ -414,6 +414,6 @@ if accounts:
             for _ in row
         ]
 
-    st.dataframe(df.style.apply(highlight_subtotal, axis=1), use_container_width=True, hide_index=True)
+    st.dataframe(df.style.apply(highlight_subtotal, axis=1), width="stretch", hide_index=True)
 else:
     st.info("No accounts to display.")

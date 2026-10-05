@@ -82,7 +82,7 @@ if obligations:
         "Tipo": o["tipo"], "Concepto": o["concepto"],
         "Cuenta": acc_name.get(o["account_id"], "—"), "Importe": o["monto"],
     } for o in sorted(obligations, key=lambda o: -o["monto"])])
-    st.dataframe(df.assign(Importe=df["Importe"].map(format_currency)), hide_index=True, use_container_width=True)
+    st.dataframe(df.assign(Importe=df["Importe"].map(format_currency)), hide_index=True, width="stretch")
     st.caption("Se gestiona en Fixed Expenses (pagos) y en Monthly View (tarjeta y reembolsos).")
 else:
     st.success("Nada pendiente este mes.")
@@ -136,7 +136,7 @@ if cur in months:
     fig.add_vline(x=months.index(cur) - 0.5, line_dash="dot", opacity=0.5)
 fig.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h"),
                   yaxis_tickformat=",.0f")
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 st.caption("Barras lisas = real (meses cerrados). Rayadas = proyectado. La línea es lo que acumulas al cierre de cada mes.")
 
 future = traj[traj["Tipo"] == "Proyectado"]
@@ -171,7 +171,7 @@ if dev:
     fig2.add_bar(y=dev["Categoría"], x=dev["Este mes"], name=f"{cur} (hasta hoy)", orientation="h")
     fig2.update_layout(barmode="overlay", height=max(220, 40 * len(dev)), margin=dict(l=10, r=10, t=10, b=10),
                        legend=dict(orientation="h"), yaxis=dict(autorange="reversed"))
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
     st.caption("Ojo: el mes en curso está incompleto; compáralo con el ritmo de arriba, no con el total.")
 else:
     st.info("Aún no hay gastos registrados.")

@@ -11,7 +11,7 @@ from utils.credit_ui import credit_inputs, credit_fields
 st.title("💸 Transactions (Real)")
 refresh_col, _ = st.columns([1, 5])
 with refresh_col:
-    if st.button("🔄 Refresh Data", use_container_width=True):
+    if st.button("🔄 Refresh Data", width="stretch"):
         clear_firestore_read_caches()
         st.rerun()
 

@@ -103,12 +103,12 @@ if accounts:
         else:
             col4.write("") # empty space
             
-        with st.popover("⚙️", use_container_width=True):
-            if st.button("Edit", key=f"edit_{a['id']}", use_container_width=True):
+        with st.popover("⚙️", width="stretch"):
+            if st.button("Edit", key=f"edit_{a['id']}", width="stretch"):
                 bank_options_pass = build_bank_options(banks)
                 edit_account_dialog(a, bank_options_pass)
             
-            if st.button("Delete", key=f"del_{a['id']}", type="primary", use_container_width=True):
+            if st.button("Delete", key=f"del_{a['id']}", type="primary", width="stretch"):
                 acc_srv.delete(a['id'])
                 st.rerun()
 else:

@@ -1,5 +1,7 @@
-streamlit
-google-cloud-firestore
-pandas
-plotly
-python-dateutil
+# Pinned to the versions the test suite passes with. Upgrade deliberately:
+# change a version, run `pytest`, and only then push.
+streamlit==1.65.0
+google-cloud-firestore==2.34.0
+pandas==3.0.2
+plotly==7.1.0
+python-dateutil==2.9.0.post0

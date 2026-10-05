@@ -75,7 +75,7 @@ else:
                     "applies_to_extras": st.column_config.CheckboxColumn("Applies to Extras", default=True)
                 },
                 key="new_salary_deductions",
-                use_container_width=True
+                width="stretch"
             )
             
             submitted = st.form_submit_button("Save Salary")
@@ -143,7 +143,7 @@ def edit_salary_dialog(salary, acc_options):
                 "applies_to_extras": st.column_config.CheckboxColumn("Applies to Extras", default=True)
             },
             key=f"edit_salary_deductions_{salary['id']}",
-            use_container_width=True
+            width="stretch"
         )
             
         submitted = st.form_submit_button("Update Salary")
@@ -198,7 +198,7 @@ def raise_dialog(salary):
         n = sum(1 for m in months if desde <= m < cobro)
         st.info(f"En {cobro} cobrarás el nuevo bruto + {n} mes(es) de atrasos "
                 f"≈ {format_currency(n * (nuevo - actual))} brutos.")
-    if st.button("Aplicar subida", type="primary", use_container_width=True):
+    if st.button("Aplicar subida", type="primary", width="stretch"):
         revs = [r for r in (salary.get("revisiones") or []) if r["desde"] != desde]
         rev = {"desde": desde, "salario_bruto": float(nuevo)}
         if retro:
@@ -214,10 +214,10 @@ def edit_overtime_dialog(ot):
     mes = st.selectbox("Mes en que se cobran", months, index=months.index(ot.get("mes_aplicacion")) if ot.get("mes_aplicacion") in months else 0)
     monto = st.number_input("Importe bruto", value=float(ot.get("monto_bruto", 0.0)), min_value=0.0, step=10.0)
     c1, c2 = st.columns(2)
-    if c1.button("Guardar", type="primary", use_container_width=True):
+    if c1.button("Guardar", type="primary", width="stretch"):
         ot_srv.update(ot["id"], {"mes_aplicacion": mes, "monto_bruto": float(monto)})
         st.rerun()
-    if c2.button("Borrar", use_container_width=True):
+    if c2.button("Borrar", width="stretch"):
         ot_srv.delete(ot["id"])
         st.rerun()
 
@@ -233,16 +233,16 @@ def delete_salary_dialog(salary):
         st.write("Si el trabajo terminó, **finalízalo**: deja de contar desde el mes siguiente y conserva la historia.")
         months = get_month_options()
         last = st.selectbox("Último mes cobrado", months, index=months.index(get_current_month()))
-        if st.button("Finalizar", type="primary", use_container_width=True):
+        if st.button("Finalizar", type="primary", width="stretch"):
             sal_srv.update(salary["id"], {"fecha_fin": _month_end(last)})
             st.rerun()
         st.divider()
         confirm = st.checkbox("Entiendo que borrar altera el histórico")
-        if st.button("Borrar igualmente", disabled=not confirm, use_container_width=True):
+        if st.button("Borrar igualmente", disabled=not confirm, width="stretch"):
             sal_srv.delete(salary["id"])
             st.rerun()
     else:
-        if st.button("Borrar", type="primary", use_container_width=True):
+        if st.button("Borrar", type="primary", width="stretch"):
             sal_srv.delete(salary["id"])
             st.rerun()
 
@@ -282,7 +282,7 @@ if salaries:
                                      "Variación": f"{((r['salario_bruto'] - prev) / prev) * 100:+.2f} %" if prev else "",
                                      "Se cobra desde": r.get("cobro_desde", r["desde"])})
                         prev = r["salario_bruto"]
-                    st.dataframe(rows, hide_index=True, use_container_width=True)
+                    st.dataframe(rows, hide_index=True, width="stretch")
                     for r in revs:
                         if st.button(f"Quitar subida de {r['desde']}", key=f"rmrev_{s['id']}_{r['desde']}"):
                             sal_srv.update(s["id"], {"revisiones": [x for x in revs if x["desde"] != r["desde"]]})
@@ -326,6 +326,6 @@ if salaries:
                         "Deducciones": format_currency(-b["deducciones"]),
                         "Neto": format_currency(b["neto"]),
                     })
-                st.dataframe(rows, hide_index=True, use_container_width=True)
+                st.dataframe(rows, hide_index=True, width="stretch")
 else:
     st.info("No salaries defined.")

@@ -213,17 +213,17 @@ def delete_fe_dialog(fe):
         st.write("Lo normal es **finalizarlo**: deja de aplicarse a partir del mes siguiente y conserva la historia.")
         months = get_month_options()
         last = st.selectbox("Último mes en que se paga", months, index=months.index(get_current_month()))
-        if st.button("Finalizar", type="primary", use_container_width=True):
+        if st.button("Finalizar", type="primary", width="stretch"):
             fe_srv.update(fe["id"], {"fecha_fin": _month_end(last)})
             st.rerun()
         st.divider()
         confirm = st.checkbox("Entiendo que borrar altera el histórico")
-        if st.button("Borrar igualmente", disabled=not confirm, use_container_width=True):
+        if st.button("Borrar igualmente", disabled=not confirm, width="stretch"):
             fe_srv.delete(fe["id"])
             st.rerun()
     else:
         st.write(f"¿Borrar **{fe['nombre']}**? No tiene pagos registrados, así que no altera saldos pasados.")
-        if st.button("Borrar", type="primary", use_container_width=True):
+        if st.button("Borrar", type="primary", width="stretch"):
             fe_srv.delete(fe["id"])
             st.rerun()
 
@@ -237,7 +237,7 @@ def change_amount_dialog(fe):
     nuevo = st.number_input("Nuevo importe mensual", value=float(actual), step=10.0)
     if actual:
         st.caption(f"Antes {format_currency(actual)} → variación {((nuevo - actual) / actual) * 100:+.1f} %")
-    if st.button("Aplicar", type="primary", use_container_width=True):
+    if st.button("Aplicar", type="primary", width="stretch"):
         revs = [r for r in (fe.get("revisiones") or []) if r["desde"] != desde]
         revs.append({"desde": desde, "monto": float(nuevo)})
         fe_srv.update(fe["id"], {"revisiones": sorted(revs, key=lambda r: r["desde"])})
@@ -284,7 +284,7 @@ if all_fe:
                     rows = _history_rows(fe)
                     st.dataframe(
                         [{**r, "Importe": format_currency(r["Importe"])} for r in rows],
-                        hide_index=True, use_container_width=True,
+                        hide_index=True, width="stretch",
                     )
                     for r in sorted(revs, key=lambda r: r["desde"]):
                         if st.button(f"Quitar cambio de {r['desde']}", key=f"rmrev_{fe['id']}_{r['desde']}"):
