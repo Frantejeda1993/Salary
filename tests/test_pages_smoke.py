@@ -140,3 +140,12 @@ def test_monthly_view_shows_projection_if_loans_settled():
     at = _run("monthly_view")
     line = next(m.value for m in at.markdown if "Si se saldan los préstamos" in m.value)
     assert "devuelves 250,00" in line
+
+
+def test_monthly_view_reaches_the_oldest_data_month():
+    at = _run("monthly_view")
+    sel = next(sb for sb in at.selectbox if sb.label == "Select Month")
+    assert "2025-01" in sel.options                               # oldest fixed expense in the seed
+    sel.set_value("2025-03").run()
+    assert not at.exception
+    assert any("inicio de gestión" in c.value for c in at.caption)

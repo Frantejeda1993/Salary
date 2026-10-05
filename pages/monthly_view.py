@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from services import finance_engine
-from utils.date_utils import get_current_month, get_month_options
+from utils.date_utils import get_current_month, month_range
+from services.finance_core import add_months
 from services.firestore_service import FirestoreService, clear_firestore_read_caches
 from models.transfer import Transfer
 from models.credit_settlement import CreditSettlement
@@ -54,16 +55,23 @@ accounts = acc_srv.get_all()
 banks = bank_srv.get_all()
 bank_lookup = {b['id']: b['nombre'] for b in banks}
 
-months = get_month_options()
+current_month_str = get_current_month()
+first_month = finance_engine.get_first_data_month() or current_month_str
+months = month_range(min(first_month, add_months(current_month_str, -6)), add_months(current_month_str, 12))
 if 'sel_month' not in st.session_state:
-    st.session_state['sel_month'] = get_current_month()
+    st.session_state['sel_month'] = current_month_str
 
 selected_month = st.selectbox(
     "Select Month",
     months,
-    index=months.index(st.session_state['sel_month']) if st.session_state['sel_month'] in months else 0,
+    index=months.index(st.session_state['sel_month']) if st.session_state['sel_month'] in months
+    else months.index(current_month_str),
 )
 st.session_state['sel_month'] = selected_month
+min_managed = finance_engine.get_min_managed_month()
+if selected_month <= min_managed:
+    st.caption(f"ℹ️ Mes anterior o igual al inicio de gestión ({min_managed}): no recibe arrastre del mes anterior. "
+               "Úsalo como consulta.")
 
 st.divider()
 st.subheader(f"Summary for {selected_month}")

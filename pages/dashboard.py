@@ -12,13 +12,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from services.finance_core import FinanceCore, MIN_MANAGED_MONTH, add_months
+from services.finance_core import FinanceCore, add_months
 from services.finance_engine import (
     _calculate_raw_category_expenses,
     calculate_credit_outstanding,
     calculate_real_balance,
     get_active_budgets,
     get_month_summary,
+    get_min_managed_month,
     get_pending_obligations,
 )
 from services.firestore_service import FirestoreService, clear_firestore_read_caches
@@ -116,7 +117,7 @@ else:
 # ---------------------------------------------------------------- 4. Trajectory
 st.divider()
 st.subheader("Hacia dónde vas")
-start = max(add_months(cur, -6), add_months(MIN_MANAGED_MONTH, 1))
+start = max(add_months(cur, -6), add_months(get_min_managed_month(), 1))
 months = [add_months(start, i) for i in range(0, 13) if add_months(start, i) <= add_months(cur, 6)]
 rows = []
 for m in months:
