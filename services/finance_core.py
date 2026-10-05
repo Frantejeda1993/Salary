@@ -600,6 +600,46 @@ class FinanceCore:
                                     details, track_absorbed=False)
         return {"resultado": resultado, "budget_details": details}
 
+    # ----- dashboard helpers ------------------------------------------------
+
+    @_memo
+    def pending_obligations(self, month: str) -> list[dict]:
+        """Everything still to be paid for `month`: unpaid fixed expenses, card debt due,
+        'gastos propios' to reimburse and pending loans received by the main account."""
+        out = []
+        for fe in self.fixed_expenses_for_month(month):
+            if fe["estado"] == "impagado":
+                out.append({"tipo": "Gasto fijo", "concepto": fe.get("nombre", ""),
+                            "account_id": fe.get("account_id"), "monto": fe["monto"]})
+        for g in self.credit_groups():
+            if g["mes_cargo"] <= month and g["settlement"] is None:
+                out.append({"tipo": "Tarjeta", "concepto": f"Cargo {g['mes_cargo']}",
+                            "account_id": g["account_id"], "monto": g["total"]})
+        main = next((a for a in self.data["accounts"] if a.get("is_main", False)), None)
+        if main:
+            for acc_id, amt in self.propio_expenses_by_account(month, main["id"]).items():
+                out.append({"tipo": "Reembolso propio", "concepto": "Transferir a cuenta",
+                            "account_id": acc_id, "monto": amt})
+            for loan in self.pending_loans_for_account(main["id"]):
+                out.append({"tipo": "Préstamo", "concepto": f"Desde {loan.get('cuenta_origen', '')}",
+                            "account_id": main["id"],
+                            "monto": loan.get("outstanding_amount", loan.get("monto", 0.0))})
+        return out
+
+    @staticmethod
+    def budget_pace(used: float, limit: float, day: int, days_in_month: int) -> dict:
+        """Linear end-of-month forecast for a budget and its status."""
+        elapsed = max(day, 1) / days_in_month
+        forecast = used / elapsed
+        if used > limit:
+            status = "excedido"
+        elif forecast > limit:
+            status = "por encima del ritmo"
+        else:
+            status = "ok"
+        return {"forecast": forecast, "elapsed": elapsed,
+                "used_pct": used / limit if limit else 0.0, "status": status}
+
     # ----- summary ---------------------------------------------------------
 
     @_memo

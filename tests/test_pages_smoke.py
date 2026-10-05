@@ -107,3 +107,12 @@ def test_salaries_page_shows_raise_overtime_and_breakdown():
     at = _run("salaries")
     next(b for b in at.button if b.label == "Editar").click().run()
     assert not at.exception and any(b.label == "Guardar" for b in at.button)
+
+
+def test_dashboard_sections_and_pending():
+    at = _run("dashboard")
+    subs = [h.value for h in at.subheader]
+    assert any(x.startswith("Este mes") for x in subs) and "Pendiente este mes" in subs \
+        and "Hacia dónde vas" in subs
+    pending = at.dataframe[0].value
+    assert set(pending["Tipo"]) == {"Gasto fijo", "Tarjeta"}

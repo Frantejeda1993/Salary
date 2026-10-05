@@ -103,3 +103,8 @@ def calculate_credit_outstanding(account_id: str, month: str, reserved_only: boo
 @_cached
 def get_salary_breakdown(salary_id: str, month: str) -> dict:
     return _core().salary_breakdown(salary_id, month)
+
+
+@_cached
+def get_pending_obligations(month: str) -> list:
+    return _core().pending_obligations(month)
